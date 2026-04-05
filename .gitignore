@@ -1,3 +1,9 @@
+# Node / npm
+node_modules/
+wireframes/node_modules/
+wireframes/dist/
+wireframes/.vite/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
