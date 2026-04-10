@@ -1,3 +1,6 @@
+# CDK build output
+cdk.out/
+
 # Node / npm
 node_modules/
 wireframes/node_modules/
