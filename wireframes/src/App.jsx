@@ -6,6 +6,9 @@ import EmailSentScreen from './screens/EmailSentScreen'
 import SignUpScreen from './screens/SignUpScreen'
 import HomeScreen from './screens/HomeScreen'
 import AddTransactionScreen from './screens/AddTransactionScreen'
+import QuickAddScreen from './screens/QuickAddScreen'
+import ManageLibraryScreen from './screens/ManageLibraryScreen'
+import BudgetScreen from './screens/BudgetScreen'
 import ScanReceiptScreen from './screens/ScanReceiptScreen'
 import UploadReceiptScreen from './screens/UploadReceiptScreen'
 import ViewTransactionsScreen from './screens/ViewTransactionsScreen'
@@ -69,7 +72,10 @@ export default function App() {
         {screen === 'home' && (
           <HomeScreen
             onSignOut={() => navigate('welcome')}
+            onQuickAdd={() => navigate('quickAdd')}
             onAddTransaction={() => navigate('addTransaction')}
+            onManageLibrary={() => navigate('manageLibrary')}
+            onManageBudgets={() => navigate('budgets')}
             onScanReceipt={() => navigate('scanReceipt')}
             onUploadReceipt={() => navigate('uploadReceipt')}
             onViewTransactions={() => navigate('viewTransactions')}
@@ -79,6 +85,22 @@ export default function App() {
           <AddTransactionScreen
             onBack={() => navigate('home')}
             onSave={() => navigate('home')}
+          />
+        )}
+        {screen === 'quickAdd' && (
+          <QuickAddScreen
+            onBack={() => navigate('home')}
+            onSave={() => navigate('home')}
+          />
+        )}
+        {screen === 'budgets' && (
+          <BudgetScreen
+            onBack={() => navigate('home')}
+          />
+        )}
+        {screen === 'manageLibrary' && (
+          <ManageLibraryScreen
+            onBack={() => navigate('home')}
           />
         )}
         {screen === 'scanReceipt' && (
