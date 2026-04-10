@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Box, Text, Group, UnstyledButton } from '@mantine/core'
 
-const TRANSACTIONS = [
+const INIT_TRANSACTIONS = [
   { id: 1,  date: '2026-04-04', type: 'expense', item: 'Grocery Shopping',  tags: ['food', 'weekly'],        amount: 45.50  },
   { id: 2,  date: '2026-04-03', type: 'income',  item: 'Freelance Payment', tags: ['work', 'freelance'],     amount: 500.00 },
   { id: 3,  date: '2026-04-03', type: 'expense', item: 'Coffee',            tags: ['food', 'daily'],         amount: 9.00   },
@@ -13,6 +13,9 @@ const TRANSACTIONS = [
   { id: 9,  date: '2026-01-15', type: 'income',  item: 'Bonus',             tags: ['work'],                  amount: 1000.00 },
   { id: 10, date: '2026-01-05', type: 'expense', item: 'Gym Membership',    tags: ['health'],                amount: 45.00  },
 ]
+
+const ALL_TAGS = ['food', 'utilities', 'entertainment', 'work', 'freelance', 'subscription',
+  'transport', 'health', 'daily', 'weekly', 'monthly', 'reimbursable', 'recurring', 'one-time']
 
 const TODAY = '2026-04-04'
 
@@ -60,11 +63,23 @@ export default function ViewTransactionsScreen({ onBack, onAdd }) {
   const PERIODS = ['date', 'week', 'month', 'year', 'custom']
   const LABELS  = { date: 'Today', week: 'Week', month: 'Month', year: 'Year', custom: 'Custom' }
 
-  const [period,     setPeriod]     = useState('month')
-  const [customFrom, setCustomFrom] = useState('')
-  const [customTo,   setCustomTo]   = useState('')
+  const [transactions, setTransactions] = useState(INIT_TRANSACTIONS)
+  const [expandedId,   setExpandedId]   = useState(null)
+  const [period,       setPeriod]       = useState('month')
+  const [customFrom,   setCustomFrom]   = useState('')
+  const [customTo,     setCustomTo]     = useState('')
 
-  const filtered = filterByPeriod(TRANSACTIONS, period, customFrom, customTo)
+  const toggleExpand = (id) => setExpandedId(prev => prev === id ? null : id)
+
+  const removeTag = (txnId, tag) =>
+    setTransactions(prev => prev.map(t => t.id === txnId ? { ...t, tags: t.tags.filter(tg => tg !== tag) } : t))
+
+  const addTag = (txnId, tag) =>
+    setTransactions(prev => prev.map(t =>
+      t.id === txnId && !t.tags.includes(tag) ? { ...t, tags: [...t.tags, tag] } : t
+    ))
+
+  const filtered = filterByPeriod(transactions, period, customFrom, customTo)
   const grouped  = groupByDate(filtered)
 
   const totalIncome  = filtered.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0)
@@ -162,49 +177,135 @@ export default function ViewTransactionsScreen({ onBack, onAdd }) {
                 {fmtDate(date).toUpperCase()}
               </Text>
 
-              <Box style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {txns.map(t => (
-                  <Box
-                    key={t.id}
-                    style={{
-                      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                      padding: '12px 14px', background: '#1a1a28',
-                      borderRadius: 12, border: '1px solid #2d2d4a',
-                    }}
-                  >
-                    <Group gap={12} style={{ flex: 1, minWidth: 0 }}>
-                      <Box style={{
-                        width: 36, height: 36, borderRadius: '10px', flexShrink: 0,
-                        background: t.type === 'income' ? '#0d2420' : '#1f0d0d',
-                        display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 15,
-                        color: t.type === 'income' ? '#4db6ac' : '#f87171',
-                      }}>
-                        {t.type === 'income' ? '↓' : '↑'}
-                      </Box>
-                      <Box style={{ minWidth: 0 }}>
-                        <Text fw={600} style={{ fontSize: 13, color: '#e2e8f0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                          {t.item}
-                        </Text>
-                        <Box style={{ display: 'flex', gap: 4, marginTop: 4, flexWrap: 'wrap' }}>
-                          {t.tags.slice(0, 2).map(tag => (
-                            <Text key={tag} style={{
-                              fontSize: 10, color: '#4db6ac',
-                              background: '#0d2420', padding: '1px 6px', borderRadius: 4,
-                            }}>
-                              #{tag}
+              <Box style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {txns.map(t => {
+                  const isExpanded = expandedId === t.id
+                  const availableTags = ALL_TAGS.filter(tg => !t.tags.includes(tg))
+                  return (
+                    <Box
+                      key={t.id}
+                      style={{
+                        background: '#1a1a28',
+                        borderRadius: 12,
+                        border: `1px solid ${isExpanded ? '#2d3d5a' : '#2d2d4a'}`,
+                        overflow: 'hidden',
+                        transition: 'border-color 0.15s',
+                      }}
+                    >
+                      {/* Collapsed row — tap to expand */}
+                      <Box
+                        onClick={() => toggleExpand(t.id)}
+                        style={{
+                          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                          padding: '12px 14px', cursor: 'pointer',
+                        }}
+                      >
+                        <Group gap={12} style={{ flex: 1, minWidth: 0 }}>
+                          <Box style={{
+                            width: 36, height: 36, borderRadius: '10px', flexShrink: 0,
+                            background: t.type === 'income' ? '#0d2420' : '#1f0d0d',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 15,
+                            color: t.type === 'income' ? '#4db6ac' : '#f87171',
+                          }}>
+                            {t.type === 'income' ? '↓' : '↑'}
+                          </Box>
+                          <Box style={{ minWidth: 0, flex: 1 }}>
+                            <Text fw={600} style={{ fontSize: 13, color: '#e2e8f0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                              {t.item}
                             </Text>
-                          ))}
+                            {/* Tag chips preview (collapsed) */}
+                            {!isExpanded && (
+                              <Box style={{ display: 'flex', gap: 4, marginTop: 4, flexWrap: 'wrap' }}>
+                                {t.tags.length > 0
+                                  ? t.tags.slice(0, 3).map(tag => (
+                                      <Text key={tag} style={{ fontSize: 10, color: '#4db6ac', background: '#0d2420', padding: '1px 6px', borderRadius: 4 }}>
+                                        #{tag}
+                                      </Text>
+                                    ))
+                                  : <Text style={{ fontSize: 10, color: '#334155' }}>tap to add tags</Text>
+                                }
+                              </Box>
+                            )}
+                          </Box>
+                        </Group>
+                        <Box style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                          <Text fw={700} style={{ fontSize: 14, color: t.type === 'income' ? '#4db6ac' : '#f87171' }}>
+                            {t.type === 'income' ? '+' : '-'}${t.amount.toFixed(2)}
+                          </Text>
+                          <Text style={{ fontSize: 12, color: '#334155', transition: 'transform 0.2s', transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)' }}>
+                            ⌄
+                          </Text>
                         </Box>
                       </Box>
-                    </Group>
-                    <Text fw={700} style={{
-                      fontSize: 14, flexShrink: 0, marginLeft: 8,
-                      color: t.type === 'income' ? '#4db6ac' : '#f87171',
-                    }}>
-                      {t.type === 'income' ? '+' : '-'}${t.amount.toFixed(2)}
-                    </Text>
-                  </Box>
-                ))}
+
+                      {/* Expanded: inline tag editor */}
+                      {isExpanded && (
+                        <Box style={{ padding: '0 14px 14px', borderTop: '1px solid #1e2535' }}>
+
+                          {/* Current tags as removable chips */}
+                          <Text style={{ fontSize: 10, fontWeight: 700, color: '#475569', letterSpacing: 1, textTransform: 'uppercase', margin: '10px 0 8px' }}>
+                            Tags
+                          </Text>
+                          <Box style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
+                            {t.tags.length === 0 && (
+                              <Text style={{ fontSize: 12, color: '#334155' }}>No tags yet</Text>
+                            )}
+                            {t.tags.map(tag => (
+                              <Box key={tag} style={{
+                                display: 'flex', alignItems: 'center', gap: 4,
+                                padding: '4px 9px', borderRadius: 12,
+                                background: '#0d2420', border: '1px solid #1a4a40',
+                              }}>
+                                <Text style={{ fontSize: 12, color: '#4db6ac' }}>#{tag}</Text>
+                                <UnstyledButton
+                                  onClick={e => { e.stopPropagation(); removeTag(t.id, tag) }}
+                                  style={{ color: '#4db6ac', fontSize: 14, lineHeight: 1, opacity: 0.6 }}
+                                  onMouseEnter={e => e.currentTarget.style.opacity = '1'}
+                                  onMouseLeave={e => e.currentTarget.style.opacity = '0.6'}
+                                >×</UnstyledButton>
+                              </Box>
+                            ))}
+                          </Box>
+
+                          {/* Add tags — chips from library */}
+                          {availableTags.length > 0 && (
+                            <>
+                              <Text style={{ fontSize: 10, fontWeight: 700, color: '#334155', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 7 }}>
+                                Add tag
+                              </Text>
+                              <Box style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+                                {availableTags.map(tag => (
+                                  <Box
+                                    key={tag}
+                                    onClick={e => { e.stopPropagation(); addTag(t.id, tag) }}
+                                    style={{
+                                      padding: '4px 9px', borderRadius: 12, cursor: 'pointer',
+                                      background: '#111122', border: '1px solid #2d2d4a',
+                                    }}
+                                    onMouseEnter={e => e.currentTarget.style.borderColor = '#4db6ac'}
+                                    onMouseLeave={e => e.currentTarget.style.borderColor = '#2d2d4a'}
+                                  >
+                                    <Text style={{ fontSize: 12, color: '#475569' }}>+ #{tag}</Text>
+                                  </Box>
+                                ))}
+                              </Box>
+                            </>
+                          )}
+
+                          {/* Done */}
+                          <Box style={{ marginTop: 12, display: 'flex', justifyContent: 'flex-end' }}>
+                            <UnstyledButton
+                              onClick={e => { e.stopPropagation(); setExpandedId(null) }}
+                              style={{ fontSize: 12, fontWeight: 600, color: '#009688' }}
+                            >
+                              Done ✓
+                            </UnstyledButton>
+                          </Box>
+                        </Box>
+                      )}
+                    </Box>
+                  )
+                })}
               </Box>
             </Box>
           ))
