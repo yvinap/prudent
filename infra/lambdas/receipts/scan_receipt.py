@@ -68,10 +68,18 @@ def handler(event, context):
             {"error": f"contentType must be one of: {', '.join(sorted(_ALLOWED_CONTENT_TYPES))}"},
         )
 
-    # Look up the user's account
+    # Look up the user's active account
     try:
         user_obj = s3.get_object(Bucket=S3_BUCKET, Key=f"Metadata/users/{user_id}.json")
-        account_id = json.loads(user_obj["Body"].read())["accountId"]
+        user = json.loads(user_obj["Body"].read())
+        account_ids = user.get("accountIds") or ([user["accountId"]] if user.get("accountId") else [])
+        if not account_ids:
+            return _response(404, {"error": "User has no accounts"})
+        requested = (event.get("headers") or {}).get("X-Account-Id") or \
+                    (event.get("headers") or {}).get("x-account-id")
+        if requested and requested not in account_ids:
+            return _response(403, {"error": "Account not accessible"})
+        account_id = requested if requested else account_ids[0]
     except ClientError as exc:
         if exc.response["Error"]["Code"] == "NoSuchKey":
             return _response(404, {"error": "User not found"})

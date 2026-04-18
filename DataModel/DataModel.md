@@ -18,8 +18,9 @@ s3://prudent-data/
 │       └── {accountId}/
 │           ├── things.json           ← ALL things for the account in one file
 │           ├── tags.json             ← ALL tags for the account in one file
-           ├── categories.json       ← ALL categories for the account in one file
-           └── budgets.json          ← ALL budgets for the account in one file
+│          ├── categories.json       ← ALL categories for the account in one file
+│          ├── budgets.json          ← ALL budgets for the account in one file
+│          └── invites.json          ← ALL pending/accepted invites for the account
 ├── Transactions/
 │   └── {accountId}/
 │       └── {year}/
@@ -54,6 +55,7 @@ Represents an individual who can log in and access one or more accounts.
   "firstName": "Jane",
   "lastName": "Doe",
   "email": "jane@example.com",
+  "accountIds": ["guid"],
   "createdAt": "2026-01-01T00:00:00Z",
   "updatedAt": "2026-01-01T00:00:00Z"
 }
@@ -65,6 +67,7 @@ Represents an individual who can log in and access one or more accounts.
 | `firstName` | string | User's first name |
 | `lastName` | string | User's last name |
 | `email` | string | Unique email address used for login |
+| `accountIds` | GUID[] | All accounts the user has access to (own + shared); the first entry is their personal account |
 | `createdAt` | ISO 8601 | Record creation timestamp |
 | `updatedAt` | ISO 8601 | Last update timestamp |
 
@@ -308,6 +311,39 @@ All parsed lines for a receipt are stored together in a single JSON array alongs
 
 ---
 
+### Invite
+**Path:** `Metadata/accounts/{accountId}/invites.json`
+
+Represents an in-flight or accepted invitation for another user to join a shared account. All invites for an account are stored together in a single JSON array.
+
+```json
+[
+  {
+    "id": "guid",
+    "accountId": "guid",
+    "invitedEmail": "bob@example.com",
+    "invitedBy": "user-guid",
+    "status": "pending",
+    "createdAt": "2026-01-01T00:00:00Z",
+    "expiresAt": "2026-01-08T00:00:00Z"
+  }
+]
+```
+
+| Field | Type | Description |
+|-------|------|--------------|
+| `id` | GUID | Unique identifier |
+| `accountId` | GUID | Account the invitee is being granted access to |
+| `invitedEmail` | string | Email address of the person being invited |
+| `invitedBy` | GUID | User ID of the account member who sent the invite |
+| `status` | string | `pending` — awaiting acceptance; `accepted` — invitee joined; `revoked` — cancelled by sender |
+| `createdAt` | ISO 8601 | When the invite was sent |
+| `expiresAt` | ISO 8601 | Invite expires after 7 days if not accepted |
+
+> **Accept flow:** when the invitee clicks the link and authenticates, the accept endpoint (1) verifies the invite is `pending` and not expired, (2) adds the invitee's `userId` to `Account.secondaryOwners`, (3) appends the `accountId` to `User.accountIds`, and (4) marks the invite `accepted`.
+
+---
+
 ### Budget
 **Path:** `Metadata/accounts/{accountId}/budgets.json`
 
@@ -404,6 +440,9 @@ All actions performed by a user on a given day are appended into a single JSON a
 | `CREATE_BUDGET` | A new budget was created |
 | `UPDATE_BUDGET` | A budget was modified |
 | `DELETE_BUDGET` | A budget was deleted |
+| `INVITE_MEMBER` | An account invite was sent |
+| `ACCEPT_INVITE` | An invite was accepted and a new member joined |
+| `REVOKE_INVITE` | An invite was revoked by the sender |
 
 ---
 
@@ -412,6 +451,9 @@ All actions performed by a user on a given day are appended into a single JSON a
 ```
 User ──< Account >── User
    (primaryOwner / secondaryOwners)
+
+User.accountIds[] ──> Account   (all accounts a user can access)
+Account ──< Invite              (pending/accepted invites)
 
 Account ──< Thing
 Account ──< Tag
@@ -463,3 +505,6 @@ Budget >── Tag       (tagId — null if category-scoped)
 | Budget realized amounts computed at query time | Storing a running total would require updating it on every transaction write, creating a consistency risk; summing transactions for the period is always correct and the data volume per period is small |
 | Budget scoped to category or tag (not both, not neither) | Category scope covers the common case of classification-based budgeting with complete, unambiguous coverage; tag scope covers cross-category envelopes (e.g. work trips, reimbursables) that span multiple categories — exactly one axis prevents double-counting and undefined behaviour |
 | Receipts as separate entity | Decouples file storage lifecycle from transaction records |
+| `User.accountIds[]` instead of `User.accountId` | Supports multi-account membership; a user may belong to their own personal account and one or more shared accounts |
+| Active account resolved via `X-Account-Id` request header | The frontend tracks the currently-selected account in localStorage and sends it with every API call; the backend validates the user is a member of that account before serving data |
+| Invite stored per account | Keeps invite lifecycle (pending → accepted → revoked) visible to all account members; invite records are small and low-volume so aggregation in one file is fine |

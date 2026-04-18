@@ -3,26 +3,43 @@ import { getCurrentUser } from 'aws-amplify/auth'
 import { Hub } from 'aws-amplify/utils'
 import { signIn, signOut as doSignOut } from '../lib/auth'
 import { api } from '../lib/api'
+import { getActiveAccountId, setActiveAccountId } from '../lib/api'
 
 const AuthContext = createContext(null)
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null)
-  const [account, setAccount] = useState(null)
+  const [accounts, setAccounts] = useState([])
+  const [activeAccount, setActiveAccount] = useState(null)
   const [loading, setLoading] = useState(true)
 
   const loadSession = async () => {
     try {
       await getCurrentUser()
-      const { user: u, account: a } = await api.getMe()
+      const { user: u, accounts: accs } = await api.getMe()
       setUser(u)
-      setAccount(a)
+      setAccounts(accs || [])
+
+      // Restore previously selected account, or default to first
+      const storedId = getActiveAccountId()
+      const match = (accs || []).find((a) => a.id === storedId)
+      const resolved = match || (accs && accs[0]) || null
+      setActiveAccount(resolved)
+      setActiveAccountId(resolved?.id ?? null)
     } catch {
       setUser(null)
-      setAccount(null)
+      setAccounts([])
+      setActiveAccount(null)
     } finally {
       setLoading(false)
     }
+  }
+
+  const switchAccount = (accountId) => {
+    const target = accounts.find((a) => a.id === accountId)
+    if (!target) return
+    setActiveAccount(target)
+    setActiveAccountId(accountId)
   }
 
   useEffect(() => {
@@ -46,7 +63,8 @@ export function AuthProvider({ children }) {
       }
       if (payload.event === 'signedOut') {
         setUser(null)
-        setAccount(null)
+        setAccounts([])
+        setActiveAccount(null)
       }
     })
     return unlisten
@@ -55,12 +73,23 @@ export function AuthProvider({ children }) {
   const handleSignOut = async () => {
     await doSignOut()
     setUser(null)
-    setAccount(null)
+    setAccounts([])
+    setActiveAccount(null)
+    setActiveAccountId(null)
   }
 
   return (
     <AuthContext.Provider
-      value={{ user, account, loading, signIn, signOut: handleSignOut, refresh: loadSession }}
+      value={{
+        user,
+        accounts,
+        activeAccount,
+        switchAccount,
+        loading,
+        signIn,
+        signOut: handleSignOut,
+        refresh: loadSession,
+      }}
     >
       {children}
     </AuthContext.Provider>

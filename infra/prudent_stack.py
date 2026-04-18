@@ -10,6 +10,9 @@ from aws_cdk import (
     aws_apigateway as apigw,
     aws_iam as iam,
     aws_secretsmanager as secretsmanager,
+    aws_cloudfront as cloudfront,
+    aws_cloudfront_origins as origins,
+    aws_certificatemanager as acm,
 )
 from constructs import Construct
 
@@ -112,6 +115,9 @@ class PrudentStack(cdk.Stack):
         )
         user_pool.register_identity_provider(google_provider)
 
+        # Production domain
+        domain_name = "prudigo.com"
+
         # App client (SPA / mobile – no client secret)
         user_pool_client = user_pool.add_client(
             "PrudentAppClient",
@@ -123,8 +129,8 @@ class PrudentStack(cdk.Stack):
                     cognito.OAuthScope.EMAIL,
                     cognito.OAuthScope.PROFILE,
                 ],
-                callback_urls=["http://localhost:5173"],   # add prod URL here
-                logout_urls=["http://localhost:5173"],
+                callback_urls=["http://localhost:5173", f"https://{domain_name}"],
+                logout_urls=["http://localhost:5173", f"https://{domain_name}"],
             ),
             supported_identity_providers=[
                 cognito.UserPoolClientIdentityProvider.GOOGLE,
@@ -331,6 +337,64 @@ class PrudentStack(cdk.Stack):
             "POST", apigw.LambdaIntegration(scan_receipt_fn), **auth_kwargs
         )
 
+        # ── Frontend S3 Bucket ────────────────────────────────────────────
+        frontend_bucket = s3.Bucket(
+            self,
+            "FrontendBucket",
+            bucket_name=f"prudent-frontend-{self.account}-{self.region}",
+            removal_policy=RemovalPolicy.RETAIN,
+            block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
+        )
+
+        # ── CloudFront Distribution ───────────────────────────────────────
+        # Certificate ARN must be in us-east-1. Pass it via CDK context:
+        #   cdk deploy -c frontendCertArn=arn:aws:acm:us-east-1:...
+        cert_arn = self.node.try_get_context("frontendCertArn")
+        certificate = (
+            acm.Certificate.from_certificate_arn(self, "FrontendCert", cert_arn)
+            if cert_arn
+            else None
+        )
+
+        distribution = cloudfront.Distribution(
+            self,
+            "FrontendDistribution",
+            default_behavior=cloudfront.BehaviorOptions(
+                origin=origins.S3BucketOrigin.with_origin_access_control(
+                    frontend_bucket,
+                    origin_access_levels=[cloudfront.AccessLevel.READ],
+                ),
+                viewer_protocol_policy=cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+                cache_policy=cloudfront.CachePolicy.CACHING_OPTIMIZED,
+            ),
+            default_root_object="index.html",
+            error_responses=[
+                # React Router: serve index.html for all routes
+                cloudfront.ErrorResponse(
+                    http_status=403,
+                    response_http_status=200,
+                    response_page_path="/index.html",
+                ),
+                cloudfront.ErrorResponse(
+                    http_status=404,
+                    response_http_status=200,
+                    response_page_path="/index.html",
+                ),
+            ],
+            domain_names=[domain_name, f"www.{domain_name}"] if cert_arn else None,
+            certificate=certificate,
+        )
+
+        # Deploy built React app to S3 and invalidate CloudFront cache
+        s3deploy.BucketDeployment(
+            self,
+            "FrontendDeployment",
+            sources=[s3deploy.Source.asset("../app/dist")],
+            destination_bucket=frontend_bucket,
+            distribution=distribution,
+            distribution_paths=["/*"],
+        )
+
         # ── Stack outputs ─────────────────────────────────────────────────
         CfnOutput(self, "ApiUrl", value=api.url, description="REST API base URL")
         CfnOutput(self, "UserPoolId", value=user_pool.user_pool_id, description="Cognito User Pool ID")
@@ -340,4 +404,16 @@ class PrudentStack(cdk.Stack):
             "HostedUiUrl",
             value=user_pool_domain.base_url(),
             description="Cognito Hosted UI base URL",
+        )
+        CfnOutput(
+            self,
+            "FrontendBucketName",
+            value=frontend_bucket.bucket_name,
+            description="S3 bucket for frontend assets",
+        )
+        CfnOutput(
+            self,
+            "CloudFrontDomain",
+            value=distribution.distribution_domain_name,
+            description="CloudFront distribution domain (use as CNAME target for prudigo.com)",
         )

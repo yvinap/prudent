@@ -52,7 +52,7 @@ def handler(event, context):
         "firstName": given_name,
         "lastName": family_name,
         "email": email,
-        "accountId": account_id,
+        "accountIds": [account_id],
         "createdAt": now,
         "updatedAt": now,
     }
@@ -80,7 +80,7 @@ def handler(event, context):
     )
 
     # Empty reference-data arrays
-    for resource in ("things", "tags", "categories", "budgets"):
+    for resource in ("things", "tags", "categories", "budgets", "invites"):
         s3.put_object(
             Bucket=S3_BUCKET,
             Key=f"Metadata/accounts/{account_id}/{resource}.json",

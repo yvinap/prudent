@@ -47,7 +47,15 @@ def handler(event, context):
         return _response(400, {"error": "year, month, and date must be numeric"})
 
     user_obj = s3.get_object(Bucket=S3_BUCKET, Key=f"Metadata/users/{user_id}.json")
-    account_id = json.loads(user_obj["Body"].read())["accountId"]
+    user = json.loads(user_obj["Body"].read())
+    account_ids = user.get("accountIds") or ([user["accountId"]] if user.get("accountId") else [])
+    if not account_ids:
+        return _response(404, {"error": "User has no accounts"})
+    requested = (event.get("headers") or {}).get("X-Account-Id") or \
+                (event.get("headers") or {}).get("x-account-id")
+    if requested and requested not in account_ids:
+        return _response(403, {"error": "Account not accessible"})
+    account_id = requested if requested else account_ids[0]
 
     transactions = []
 

@@ -39,13 +39,17 @@ def handler(event, context):
             return _response(404, {"error": "User profile not found"})
         raise
 
-    account_id = user.get("accountId")
-    account = None
-    if account_id:
+    # Support both legacy single-account (accountId) and new multi-account (accountIds)
+    account_ids = user.get("accountIds") or (
+        [user["accountId"]] if user.get("accountId") else []
+    )
+
+    accounts = []
+    for aid in account_ids:
         try:
-            obj = s3.get_object(Bucket=S3_BUCKET, Key=f"Metadata/accounts/{account_id}.json")
-            account = json.loads(obj["Body"].read())
+            obj = s3.get_object(Bucket=S3_BUCKET, Key=f"Metadata/accounts/{aid}.json")
+            accounts.append(json.loads(obj["Body"].read()))
         except ClientError:
             pass
 
-    return _response(200, {"user": user, "account": account})
+    return _response(200, {"user": user, "accounts": accounts})

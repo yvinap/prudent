@@ -40,9 +40,19 @@ def _response(status: int, body: dict) -> dict:
     }
 
 
-def _get_account_id(user_id: str) -> str:
+def _resolve_account_id(user_id: str, event: dict) -> str:
     obj = s3.get_object(Bucket=S3_BUCKET, Key=f"Metadata/users/{user_id}.json")
-    return json.loads(obj["Body"].read())["accountId"]
+    user = json.loads(obj["Body"].read())
+    account_ids = user.get("accountIds") or ([user["accountId"]] if user.get("accountId") else [])
+    if not account_ids:
+        raise ValueError("User has no accounts")
+    requested = (event.get("headers") or {}).get("X-Account-Id") or \
+                (event.get("headers") or {}).get("x-account-id")
+    if requested:
+        if requested not in account_ids:
+            raise PermissionError("Account not accessible")
+        return requested
+    return account_ids[0]
 
 
 def _list(account_id: str) -> dict:
@@ -128,7 +138,9 @@ def handler(event, context):
         return _response(400, {"error": "Request body must be valid JSON"})
 
     try:
-        account_id = _get_account_id(user_id)
+        account_id = _resolve_account_id(user_id, event)
+    except PermissionError as exc:
+        return _response(403, {"error": str(exc)})
     except ClientError as exc:
         if exc.response["Error"]["Code"] == "NoSuchKey":
             return _response(404, {"error": "User not found"})
