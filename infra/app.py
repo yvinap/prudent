@@ -1,7 +1,9 @@
 import aws_cdk as cdk
-from prudent_stack import PrudentStack
+from backend_stack import BackendStack
+from frontend_stack import FrontendStack
 
 app = cdk.App()
-PrudentStack(app, "PrudentStack")
+BackendStack(app, "PrudentBackendStack")
+FrontendStack(app, "PrudentFrontendStack")
 
 app.synth()
