@@ -27,6 +27,7 @@ import boto3
 from botocore.exceptions import ClientError
 
 S3_BUCKET = os.environ["S3_BUCKET"]
+ALLOWED_ORIGINS = os.environ.get("ALLOWED_ORIGINS", "*")
 s3 = boto3.client("s3")
 
 _UPDATABLE = {
@@ -42,7 +43,10 @@ def _now_iso() -> str:
 def _response(status: int, body: dict) -> dict:
     return {
         "statusCode": status,
-        "headers": {"Content-Type": "application/json"},
+        "headers": {
+            "Content-Type": "application/json",
+            "Access-Control-Allow-Origin": ALLOWED_ORIGINS,
+        },
         "body": json.dumps(body),
     }
 

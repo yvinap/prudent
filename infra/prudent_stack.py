@@ -144,7 +144,8 @@ class PrudentStack(cdk.Stack):
         )
 
         # ── Shared Lambda environment & layer ────────────────────────────
-        common_env = {"S3_BUCKET": bucket.bucket_name}
+        allowed_origins = self.node.try_get_context("allowedOrigins") or "*"
+        common_env = {"S3_BUCKET": bucket.bucket_name, "ALLOWED_ORIGINS": allowed_origins}
 
         lambda_defaults = {
             "runtime": lambda_.Runtime.PYTHON_3_12,
