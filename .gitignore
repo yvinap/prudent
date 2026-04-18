@@ -1,6 +1,10 @@
 # CDK build output
 cdk.out/
 
+# Environment variables
+.env.local
+.env.*.local
+
 # Node / npm
 node_modules/
 wireframes/node_modules/
