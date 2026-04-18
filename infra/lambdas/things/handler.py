@@ -39,6 +39,17 @@ def _get_account_id(user_id: str) -> str:
     return json.loads(obj["Body"].read())["accountId"]
 
 
+def _list(account_id: str) -> dict:
+    key = f"Metadata/accounts/{account_id}/things.json"
+    try:
+        obj = s3.get_object(Bucket=S3_BUCKET, Key=key)
+        return _response(200, json.loads(obj["Body"].read()))
+    except ClientError as exc:
+        if exc.response["Error"]["Code"] == "NoSuchKey":
+            return _response(200, [])
+        raise
+
+
 def _create(body: dict, account_id: str) -> dict:
     name = (body.get("name") or "").strip()
     if not name:
@@ -114,6 +125,9 @@ def handler(event, context):
         if exc.response["Error"]["Code"] == "NoSuchKey":
             return _response(404, {"error": "User not found"})
         raise
+
+    if method == "GET":
+        return _list(account_id)
 
     if method == "POST":
         return _create(body, account_id)

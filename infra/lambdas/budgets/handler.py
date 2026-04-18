@@ -155,6 +155,10 @@ def handler(event, context):
             return _response(404, {"error": "User not found"})
         raise
 
+    if method == "GET":
+        key, budgets = _load_budgets(account_id)
+        return _response(200, budgets)
+
     if method == "POST":
         return _create(body, account_id)
 

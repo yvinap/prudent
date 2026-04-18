@@ -51,6 +51,11 @@ def _load_tags(account_id: str):
         raise
 
 
+def _list(account_id: str) -> dict:
+    key, tags = _load_tags(account_id)
+    return _response(200, tags)
+
+
 def _create(body: dict, account_id: str) -> dict:
     name = (body.get("name") or "").strip().lower()
     if not name:
@@ -111,6 +116,9 @@ def handler(event, context):
         if exc.response["Error"]["Code"] == "NoSuchKey":
             return _response(404, {"error": "User not found"})
         raise
+
+    if method == "GET":
+        return _list(account_id)
 
     if method == "POST":
         return _create(body, account_id)

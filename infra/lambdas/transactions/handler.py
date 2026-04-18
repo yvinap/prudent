@@ -31,7 +31,7 @@ s3 = boto3.client("s3")
 
 _UPDATABLE = {
     "thingId", "categoryId", "tagIds", "qty", "price",
-    "currency", "receiptId", "receiptLineItemId",
+    "currency", "receiptId", "receiptLineItemId", "type",
 }
 
 
@@ -97,6 +97,7 @@ def _create(body: dict, account_id: str, user_id: str) -> dict:
         "id": str(uuid.uuid4()),
         "accountId": account_id,
         "createdBy": user_id,
+        "type": body.get("type", "expense"),
         "thingId": body.get("thingId"),
         "categoryId": body.get("categoryId"),
         "tagIds": tag_ids,

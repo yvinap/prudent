@@ -289,27 +289,31 @@ class PrudentStack(cdk.Stack):
             "GET", apigw.LambdaIntegration(get_user_fn), **auth_kwargs
         )
 
-        # POST /things  |  PUT /things/{thingId}
+        # GET /things  |  POST /things  |  PUT /things/{thingId}
         things_resource = api.root.add_resource("things")
         things_integration = apigw.LambdaIntegration(things_fn)
+        things_resource.add_method("GET", things_integration, **auth_kwargs)
         things_resource.add_method("POST", things_integration, **auth_kwargs)
         things_resource.add_resource("{thingId}").add_method("PUT", things_integration, **auth_kwargs)
 
-        # POST /categories  |  PUT /categories/{categoryId}
+        # GET /categories  |  POST /categories  |  PUT /categories/{categoryId}
         categories_resource = api.root.add_resource("categories")
         categories_integration = apigw.LambdaIntegration(categories_fn)
+        categories_resource.add_method("GET", categories_integration, **auth_kwargs)
         categories_resource.add_method("POST", categories_integration, **auth_kwargs)
         categories_resource.add_resource("{categoryId}").add_method("PUT", categories_integration, **auth_kwargs)
 
-        # POST /tags  |  PUT /tags/{tagId}
+        # GET /tags  |  POST /tags  |  PUT /tags/{tagId}
         tags_resource = api.root.add_resource("tags")
         tags_integration = apigw.LambdaIntegration(tags_fn)
+        tags_resource.add_method("GET", tags_integration, **auth_kwargs)
         tags_resource.add_method("POST", tags_integration, **auth_kwargs)
         tags_resource.add_resource("{tagId}").add_method("PUT", tags_integration, **auth_kwargs)
 
-        # POST /budgets  |  PUT /budgets/{budgetId}
+        # GET /budgets  |  POST /budgets  |  PUT /budgets/{budgetId}
         budgets_resource = api.root.add_resource("budgets")
         budgets_integration = apigw.LambdaIntegration(budgets_fn)
+        budgets_resource.add_method("GET", budgets_integration, **auth_kwargs)
         budgets_resource.add_method("POST", budgets_integration, **auth_kwargs)
         budgets_resource.add_resource("{budgetId}").add_method("PUT", budgets_integration, **auth_kwargs)
 
