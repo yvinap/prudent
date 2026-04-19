@@ -1,8 +1,10 @@
 import './config.js'
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { useEffect } from 'react'
+import { BrowserRouter, Routes, Route, Navigate, useNavigate, useSearchParams } from 'react-router-dom'
 import { MantineProvider } from '@mantine/core'
 import '@mantine/core/styles.css'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
+import { api } from './lib/api'
 import AppShell from './components/AppShell'
 import WelcomeScreen from './screens/WelcomeScreen'
 import HomeScreen from './screens/HomeScreen'
@@ -13,6 +15,45 @@ import ManageLibraryScreen from './screens/ManageLibraryScreen'
 import ScanReceiptScreen from './screens/ScanReceiptScreen'
 import UploadReceiptScreen from './screens/UploadReceiptScreen'
 import ViewTransactionsScreen from './screens/ViewTransactionsScreen'
+import AccountScreen from './screens/AccountScreen'
+
+const INVITE_TOKEN_KEY = 'prudent_pending_invite'
+
+/**
+ * When the app mounts with ?invite=TOKEN, store the token for after login.
+ * Once the user is authenticated, accept the invite and navigate to /account.
+ */
+function InviteAcceptor() {
+  const { user } = useAuth()
+  const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
+
+  useEffect(() => {
+    const token = searchParams.get('invite')
+    if (token) {
+      localStorage.setItem(INVITE_TOKEN_KEY, token)
+      // Remove the param from the URL
+      searchParams.delete('invite')
+      setSearchParams(searchParams, { replace: true })
+    }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!user) return
+    const token = localStorage.getItem(INVITE_TOKEN_KEY)
+    if (!token) return
+    localStorage.removeItem(INVITE_TOKEN_KEY)
+    api.acceptInvite(token)
+      .then(() => {
+        navigate('/account', { replace: true, state: { inviteAccepted: true } })
+      })
+      .catch(() => {
+        navigate('/account', { replace: true, state: { inviteError: true } })
+      })
+  }, [user]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  return null
+}
 
 function Loading() {
   return (
@@ -135,6 +176,14 @@ function AppRoutes() {
           </ProtectedRoute>
         }
       />
+      <Route
+        path="/account"
+        element={
+          <ProtectedRoute>
+            <AccountScreen />
+          </ProtectedRoute>
+        }
+      />
       {/* Catch-all */}
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
@@ -146,6 +195,7 @@ export default function App() {
     <MantineProvider defaultColorScheme="dark">
       <AuthProvider>
         <BrowserRouter>
+          <InviteAcceptor />
           <AppRoutes />
         </BrowserRouter>
       </AuthProvider>

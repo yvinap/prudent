@@ -70,6 +70,15 @@ export const api = {
   // Receipts — returns { receipt, uploadUrl }
   initiateReceiptUpload: (contentType) =>
     request('POST', '/receipts', { contentType }),
+
+  // Account management
+  getAccount: () => request('GET', '/account'),
+  createAccount: (data) => request('POST', '/accounts', data),
+
+  // Invites
+  createInvite: (data) => request('POST', '/invites', data),
+  revokeInvite: (inviteId) => request('DELETE', `/invites/${inviteId}`),
+  acceptInvite: (token) => request('POST', '/invites/accept', { token }),
 }
 
 /** Upload a file directly to S3 via a presigned PUT URL. */

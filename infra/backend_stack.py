@@ -229,6 +229,31 @@ class BackendStack(cdk.Stack):
             )
         )
 
+        accounts_fn = lambda_.Function(
+            self,
+            "AccountsFn",
+            function_name="prudent-accounts",
+            code=lambda_.Code.from_asset("lambdas/accounts"),
+            handler="handler.handler",
+            **lambda_defaults,
+        )
+        bucket.grant_read_write(accounts_fn)
+
+        invites_fn = lambda_.Function(
+            self,
+            "InvitesFn",
+            function_name="prudent-invites",
+            code=lambda_.Code.from_asset("lambdas/invites"),
+            handler="handler.handler",
+            environment={
+                **common_env,
+                "APP_URL": "https://prudigo.com",
+            },
+            runtime=lambda_.Runtime.PYTHON_3_12,
+            timeout=Duration.seconds(29),
+        )
+        bucket.grant_read_write(invites_fn)
+
         # ── API Gateway REST API ──────────────────────────────────────────
         api = apigw.RestApi(
             self,
@@ -289,6 +314,18 @@ class BackendStack(cdk.Stack):
 
         receipts_resource = api.root.add_resource("receipts")
         receipts_resource.add_method("POST", apigw.LambdaIntegration(scan_receipt_fn), **auth_kwargs)
+
+        account_resource = api.root.add_resource("account")
+        account_resource.add_method("GET", apigw.LambdaIntegration(accounts_fn), **auth_kwargs)
+
+        accounts_resource = api.root.add_resource("accounts")
+        accounts_resource.add_method("POST", apigw.LambdaIntegration(accounts_fn), **auth_kwargs)
+
+        invites_resource = api.root.add_resource("invites")
+        invites_integration = apigw.LambdaIntegration(invites_fn)
+        invites_resource.add_method("POST", invites_integration, **auth_kwargs)
+        invites_resource.add_resource("accept").add_method("POST", invites_integration, **auth_kwargs)
+        invites_resource.add_resource("{inviteId}").add_method("DELETE", invites_integration, **auth_kwargs)
 
         # ── Stack outputs (also consumed by FrontendStack) ────────────────
         CfnOutput(self, "ApiUrl", value=api.url, description="REST API base URL")

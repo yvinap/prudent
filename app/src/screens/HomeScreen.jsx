@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Box, Text, Group, Badge, Menu } from '@mantine/core'
+import { Box, Text, Group, Badge, ActionIcon } from '@mantine/core'
 import { useAuth } from '../contexts/AuthContext'
 import { api } from '../lib/api'
 
@@ -89,7 +89,7 @@ function fmtDate(d) {
 
 export default function HomeScreen() {
   const navigate = useNavigate()
-  const { user, accounts, activeAccount, switchAccount, signOut } = useAuth()
+  const { user, activeAccount } = useAuth()
 
   const [transactions, setTransactions] = useState([])
   const [budgets, setBudgets] = useState([])
@@ -169,67 +169,42 @@ export default function HomeScreen() {
 
           {/* Account switcher */}
           <Group gap={6}>
-            {accounts.length > 1 ? (
-              <Menu shadow="md" width={200} position="bottom-end">
-                <Menu.Target>
-                  <Badge
-                    radius="xl"
-                    size="sm"
-                    style={{
-                      background: 'rgba(255,255,255,0.2)',
-                      color: 'white',
-                      border: 'none',
-                      cursor: 'pointer',
-                      maxWidth: 130,
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap',
-                    }}
-                  >
-                    {activeAccount?.name ?? 'My Account'} ▾
-                  </Badge>
-                </Menu.Target>
-                <Menu.Dropdown
-                  style={{ background: '#1a1a2e', border: '1px solid #2d2d4a' }}
-                >
-                  <Menu.Label style={{ color: '#64748b', fontSize: 11 }}>Switch account</Menu.Label>
-                  {accounts.map((acc) => (
-                    <Menu.Item
-                      key={acc.id}
-                      onClick={() => switchAccount(acc.id)}
-                      style={{
-                        color: acc.id === activeAccount?.id ? '#009688' : '#cbd5e1',
-                        fontWeight: acc.id === activeAccount?.id ? 700 : 400,
-                        fontSize: 13,
-                      }}
-                    >
-                      {acc.id === activeAccount?.id ? '✓ ' : ''}{acc.name}
-                    </Menu.Item>
-                  ))}
-                  <Menu.Divider style={{ borderColor: '#2d2d4a' }} />
-                  <Menu.Item
-                    onClick={signOut}
-                    style={{ color: '#ef4444', fontSize: 13 }}
-                  >
-                    Sign out
-                  </Menu.Item>
-                </Menu.Dropdown>
-              </Menu>
-            ) : (
+            {activeAccount && (
               <Badge
                 radius="xl"
                 size="sm"
-                style={{ background: 'rgba(255,255,255,0.2)', color: 'white', border: 'none', cursor: 'pointer' }}
-                onClick={signOut}
+                style={{
+                  background: 'rgba(255,255,255,0.2)',
+                  color: 'white',
+                  border: 'none',
+                  maxWidth: 120,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
               >
-                Sign out
+                {activeAccount.name}
               </Badge>
             )}
+            <ActionIcon
+              variant="transparent"
+              size="sm"
+              onClick={() => navigate('/account')}
+              title="Account settings"
+              style={{
+                color: 'rgba(255,255,255,0.85)',
+                fontSize: 18,
+                width: 30,
+                height: 30,
+              }}
+            >
+              ⚙
+            </ActionIcon>
           </Group>
         </Group>
         <Text c="white" style={{ opacity: 0.85, fontSize: 13 }}>
           {user?.firstName ? `Hi, ${user.firstName}` : ''}
-          {activeAccount && accounts.length > 1 ? ` · ${activeAccount.name}` : ''}
+          {activeAccount ? ` · ${activeAccount.name}` : ''}
           {' · '}{monthLabel}
         </Text>
         <Text c="white" fw={800} style={{ fontSize: 30, marginTop: 2 }}>
