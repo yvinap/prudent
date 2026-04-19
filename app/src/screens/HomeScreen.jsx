@@ -164,7 +164,7 @@ export default function HomeScreen() {
             >
               <Text fw={800} c="white" size="sm">P</Text>
             </Box>
-            <Text fw={700} c="white" size="md">Prudent</Text>
+            <Text fw={700} c="white" size="md">Prudigo</Text>
           </Group>
 
           {/* Account switcher */}

@@ -33,7 +33,7 @@ export default function WelcomeScreen() {
         </Box>
 
         <Text fw={800} ta="center" style={{ fontSize: 36, letterSpacing: '-0.5px', color: '#f1f5f9' }}>
-          Prudent
+          Prudigo
         </Text>
         <Text c="dimmed" ta="center" mt={8} style={{ fontSize: 16, maxWidth: 260 }}>
           Smart budgeting for a better financial future
