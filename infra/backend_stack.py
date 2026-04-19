@@ -5,6 +5,7 @@ from aws_cdk import (
     RemovalPolicy,
     aws_s3 as s3,
     aws_s3_deployment as s3deploy,
+    aws_s3_notifications as s3n,
     aws_lambda as lambda_,
     aws_cognito as cognito,
     aws_apigateway as apigw,
@@ -227,6 +228,31 @@ class BackendStack(cdk.Stack):
                 actions=["s3:PutObject"],
                 resources=[bucket.arn_for_objects("receipts/raw/*")],
             )
+        )
+
+        # S3-triggered Lambda: parse uploaded receipts with Textract
+        parse_receipt_fn = lambda_.Function(
+            self,
+            "ParseReceiptFn",
+            function_name="prudent-parse-receipt",
+            code=lambda_.Code.from_asset("lambdas/receipts"),
+            handler="parse_receipt.handler",
+            runtime=lambda_.Runtime.PYTHON_3_12,
+            timeout=Duration.seconds(120),  # Textract can be slow for PDFs
+            environment=common_env,
+        )
+        bucket.grant_read_write(parse_receipt_fn)
+        parse_receipt_fn.add_to_role_policy(
+            iam.PolicyStatement(
+                actions=["textract:AnalyzeExpense"],
+                resources=["*"],
+            )
+        )
+        # Trigger automatically when the client uploads a raw receipt image/PDF
+        bucket.add_event_notification(
+            s3.EventType.OBJECT_CREATED,
+            s3n.LambdaDestination(parse_receipt_fn),
+            s3.NotificationKeyFilter(prefix="receipts/raw/"),
         )
 
         accounts_fn = lambda_.Function(

@@ -99,7 +99,7 @@ def handler(event, context):
         "application/pdf": "pdf",
     }
     ext = ext_map[content_type]
-    raw_s3_key = f"receipts/raw/{account_id}/{receipt_id}.{ext}"
+    raw_s3_key = f"receipts/raw/{account_id}/{year}/{month}/{receipt_id}.{ext}"
 
     # Presigned URL – the client PUTs the file directly to S3
     upload_url = s3.generate_presigned_url(
