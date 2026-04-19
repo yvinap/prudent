@@ -99,7 +99,12 @@ def _resolve_account_id(user: dict, event: dict) -> str:
 def _create_invite(event: dict) -> dict:
     """Create an invite token for the active account."""
     user_id = event["requestContext"]["authorizer"]["claims"]["sub"]
-    user = _load_user(user_id)
+    try:
+        user = _load_user(user_id)
+    except ClientError as exc:
+        if exc.response["Error"]["Code"] == "NoSuchKey":
+            return _response(404, {"error": "User profile not found"})
+        raise
     try:
         account_id = _resolve_account_id(user, event)
     except PermissionError:
@@ -147,7 +152,12 @@ def _create_invite(event: dict) -> dict:
 def _revoke_invite(invite_id: str, event: dict) -> dict:
     """Mark a pending invite as revoked."""
     user_id = event["requestContext"]["authorizer"]["claims"]["sub"]
-    user = _load_user(user_id)
+    try:
+        user = _load_user(user_id)
+    except ClientError as exc:
+        if exc.response["Error"]["Code"] == "NoSuchKey":
+            return _response(404, {"error": "User profile not found"})
+        raise
     try:
         account_id = _resolve_account_id(user, event)
     except PermissionError:

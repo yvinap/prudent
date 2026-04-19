@@ -327,6 +327,24 @@ class BackendStack(cdk.Stack):
         invites_resource.add_resource("accept").add_method("POST", invites_integration, **auth_kwargs)
         invites_resource.add_resource("{inviteId}").add_method("DELETE", invites_integration, **auth_kwargs)
 
+        # ── Gateway responses — inject CORS headers into ALL error responses ──
+        # Without this, unhandled Lambda errors (502) and auth failures (401/403)
+        # return without Access-Control-Allow-Origin, which browsers report as CORS errors.
+        cors_headers = {
+            "Access-Control-Allow-Origin": "'*'",
+            "Access-Control-Allow-Headers": "'Authorization,Content-Type,X-Account-Id'",
+        }
+        api.add_gateway_response(
+            "GwDefault4XX",
+            type=apigw.ResponseType.DEFAULT_4_XX,
+            response_headers=cors_headers,
+        )
+        api.add_gateway_response(
+            "GwDefault5XX",
+            type=apigw.ResponseType.DEFAULT_5_XX,
+            response_headers=cors_headers,
+        )
+
         # ── Stack outputs (also consumed by FrontendStack) ────────────────
         CfnOutput(self, "ApiUrl", value=api.url, description="REST API base URL")
         CfnOutput(self, "UserPoolId", value=user_pool.user_pool_id, description="Cognito User Pool ID")

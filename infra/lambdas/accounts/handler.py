@@ -91,7 +91,12 @@ def _resolve_member(user_id: str) -> dict:
 
 def _get_account(event: dict) -> dict:
     user_id = event["requestContext"]["authorizer"]["claims"]["sub"]
-    user = _load_user(user_id)
+    try:
+        user = _load_user(user_id)
+    except ClientError as exc:
+        if exc.response["Error"]["Code"] == "NoSuchKey":
+            return _response(404, {"error": "User profile not found"})
+        raise
     try:
         account_id = _resolve_account_id(user, event)
     except PermissionError:
@@ -121,6 +126,12 @@ def _get_account(event: dict) -> dict:
 
 def _create_account(event: dict) -> dict:
     user_id = event["requestContext"]["authorizer"]["claims"]["sub"]
+    try:
+        _load_user(user_id)  # validate user exists before proceeding
+    except ClientError as exc:
+        if exc.response["Error"]["Code"] == "NoSuchKey":
+            return _response(404, {"error": "User profile not found"})
+        raise
     body = json.loads(event.get("body") or "{}")
     name = (body.get("name") or "").strip()
     if not name:
