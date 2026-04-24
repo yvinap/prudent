@@ -589,20 +589,20 @@ def handler(event, context):
 
 # ── Local debug entry point ───────────────────────────────────────────────────
 
-if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+# if __name__ == "__main__":
+#     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
-    event = {
-        "Records": [
-            {
-                "s3": {
-                    "bucket": {"name": S3_BUCKET},
-                    "object": {
-                        "key": "receipts/raw/8df9638b-b13c-43a4-bd5e-c5fc20f8163e/2026/04/f868c09a-1505-4417-a148-cc9cba7a837f.png"
-                    },
-                }
-            }
-        ]
-    }
+#     event = {
+#         "Records": [
+#             {
+#                 "s3": {
+#                     "bucket": {"name": S3_BUCKET},
+#                     "object": {
+#                         "key": "receipts/raw/8df9638b-b13c-43a4-bd5e-c5fc20f8163e/2026/04/f868c09a-1505-4417-a148-cc9cba7a837f.png"
+#                     },
+#                 }
+#             }
+#         ]
+#     }
 
-    handler(event, None)
+#     handler(event, None)
