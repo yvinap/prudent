@@ -32,17 +32,28 @@ from botocore.exceptions import ClientError
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-S3_BUCKET = os.environ["S3_BUCKET"]
+S3_BUCKET = os.environ.get("S3_BUCKET", "prudent-REDACTED-us-east-1")
 DEFAULT_CURRENCY = os.environ.get("DEFAULT_CURRENCY", "USD")
+_BEDROCK_MODEL_ID = os.environ.get("BEDROCK_MODEL_ID", "us.amazon.nova-2-lite-v1:0")
 
-s3 = boto3.client("s3")
-textract = boto3.client("textract")
+_profile = os.environ.get("AWS_PROFILE_NAME")
+if _profile:
+    _session = boto3.Session(profile_name=_profile)
+    s3 = _session.client("s3")
+    textract = _session.client("textract")
+    bedrock = _session.client("bedrock-runtime")
+else:
+    s3 = boto3.client("s3")
+    textract = boto3.client("textract")
+    bedrock = boto3.client("bedrock-runtime")
 
 # ── Date / number helpers ─────────────────────────────────────────────────────
 
 _DATE_FORMATS = (
     "%m/%d/%Y", "%m-%d-%Y",
+    "%m/%d/%y", "%m-%d-%y",
     "%d/%m/%Y", "%d-%m-%Y",
+    "%d/%m/%y", "%d-%m-%y",
     "%Y-%m-%d", "%Y/%m/%d",
     "%B %d, %Y", "%b %d, %Y",
     "%B %d %Y", "%b %d %Y",
@@ -126,6 +137,71 @@ def _find_thing(things: list, description: str) -> dict | None:
     return None
 
 
+def _match_category_bedrock(description: str, categories: list) -> str | None:
+    """Use Amazon Nova 2 to pick the best category id for a line-item description."""
+    if not categories:
+        return None
+    category_list = ", ".join(f'"{c["name"]}"' for c in categories)
+    prompt = (
+        f"You are a receipt-parsing assistant. "
+        f"Given the item description below, choose the single most appropriate "
+        f"category from the list provided.\n\n"
+        f"Item: {description}\n"
+        f"Categories: {category_list}\n\n"
+        f"Rules:\n"
+        f"- Reply with ONLY the exact category name from the list above.\n"
+        f"- Do not include punctuation, quotes, explanation, or any other text.\n"
+        f"- If no category fits, reply with a single blank line.\n"
+        f"- Your entire response must be one of: {category_list} or empty."
+    )
+    try:
+        resp = bedrock.converse(
+            modelId=_BEDROCK_MODEL_ID,
+            messages=[{"role": "user", "content": [{"text": prompt}]}],
+        )
+        matched_name = resp["output"]["message"]["content"][0]["text"].strip().strip('"')
+        for cat in categories:
+            if cat["name"].lower() == matched_name.lower():
+                logger.info(
+                    "Bedrock matched category | desc=%r category=%r",
+                    description,
+                    matched_name,
+                )
+                return cat["id"]
+        logger.warning(
+            "Bedrock returned unknown category %r for %r", matched_name, description
+        )
+    except Exception as exc:
+        logger.warning("Bedrock category match failed | desc=%r error=%s", description, exc)
+    return None
+
+
+def _find_or_create_thing(
+    things: list,
+    account_id: str,
+    description: str,
+    categories: list,
+    fallback_cat_id: str | None,
+) -> tuple[dict, bool]:
+    """Return (thing, created) — reuses an existing Thing or appends a new one to the list."""
+    existing = _find_thing(things, description)
+    if existing is not None:
+        return existing, False
+
+    cat_id = _match_category_bedrock(description, categories) or fallback_cat_id
+    now = _now_iso()
+    new_thing = {
+        "id": str(uuid.uuid4()),
+        "accountId": account_id,
+        "name": description.strip(),
+        "defaultCategoryId": cat_id,
+        "createdAt": now,
+        "updatedAt": now,
+    }
+    things.append(new_thing)
+    return new_thing, True
+
+
 def _default_category_id(categories: list) -> str | None:
     """Return a sensible fallback category id, or None if no categories exist."""
     preferred = ("groceries", "food", "general", "shopping", "other")
@@ -138,43 +214,97 @@ def _default_category_id(categories: list) -> str | None:
 
 # ── Textract response parsing ─────────────────────────────────────────────────
 
-def _parse_expense_document(expense_doc: dict) -> tuple[str | None, str | None, list[dict]]:
+def _find_or_create_tag(tags: list, account_id: str, name: str) -> tuple[dict, bool]:
+    """Return (tag, created) — reuses an existing tag or appends a new one to the list."""
+    norm = name.lower().strip()
+    for tag in tags:
+        if tag["name"] == norm:
+            return tag, False
+    now = _now_iso()
+    new_tag = {
+        "id": str(uuid.uuid4()),
+        "accountId": account_id,
+        "name": norm,
+        "createdAt": now,
+        "updatedAt": now,
+    }
+    tags.append(new_tag)
+    return new_tag, True
+
+
+def _best_summary_fields(summary_fields: list) -> dict[str, str]:
     """
-    Extract (receipt_date, currency, line_items) from a Textract ExpenseDocument.
+    Collapse SummaryFields into a {field_type: value} dict, keeping the entry
+    with the highest ValueDetection Confidence when duplicates exist.
+    """
+    best: dict[str, tuple[str, float]] = {}  # field_type -> (value, confidence)
+    for field in summary_fields:
+        field_type = field.get("Type", {}).get("Text", "")
+        detection = field.get("ValueDetection", {})
+        value = detection.get("Text", "").strip()
+        if not field_type or not value:
+            continue
+        confidence = detection.get("Confidence", 0.0)
+        if field_type not in best or confidence > best[field_type][1]:
+            best[field_type] = (value, confidence)
+    return {k: v for k, (v, _) in best.items()}
+
+
+def _best_line_item_fields(line_item_expense_fields: list) -> dict[str, str]:
+    """
+    Collapse LineItemExpenseFields into a {field_type: value} dict, keeping the
+    entry with the highest ValueDetection Confidence when duplicates exist.
+    """
+    best: dict[str, tuple[str, float]] = {}
+    for f in line_item_expense_fields:
+        ftype = f.get("Type", {}).get("Text", "")
+        detection = f.get("ValueDetection", {})
+        fval = detection.get("Text", "").strip()
+        if not ftype or not fval:
+            continue
+        confidence = detection.get("Confidence", 0.0)
+        if ftype not in best or confidence > best[ftype][1]:
+            best[ftype] = (fval, confidence)
+    return {k: v for k, (v, _) in best.items()}
+
+
+def _parse_expense_document(expense_doc: dict) -> tuple[str | None, str | None, str | None, list[dict]]:
+    """
+    Extract (receipt_date, currency, vendor_name, line_items) from a Textract ExpenseDocument.
 
     line_items is a list of:
         {rawText, description, qty, unitPrice}
     """
-    receipt_date: str | None = None
-    currency: str | None = None
+    summary = _best_summary_fields(expense_doc.get("SummaryFields", []))
 
-    for field in expense_doc.get("SummaryFields", []):
-        field_type = field.get("Type", {}).get("Text", "")
-        value = field.get("ValueDetection", {}).get("Text", "").strip()
-        if not value:
-            continue
-        if field_type == "INVOICE_RECEIPT_DATE" and receipt_date is None:
-            receipt_date = _parse_receipt_date(value)
-            if receipt_date:
-                logger.info("Receipt date detected by Textract: %s", receipt_date)
-            else:
-                logger.warning("Could not parse Textract date string: %r", value)
-        elif field_type == "CURRENCY" and currency is None:
-            currency = value.upper()[:3]
+    receipt_date: str | None = None
+    if raw_date := summary.get("INVOICE_RECEIPT_DATE"):
+        receipt_date = _parse_receipt_date(raw_date)
+        if receipt_date:
+            logger.info("Receipt date detected by Textract: %s", receipt_date)
+        else:
+            logger.warning("Could not parse Textract date string: %r", raw_date)
+
+    currency: str | None = None
+    if raw_currency := summary.get("CURRENCY"):
+        currency = raw_currency.upper()[:3]
+
+    vendor_name: str | None = summary.get("VENDOR_NAME")
+    if vendor_name:
+        logger.info("Vendor name detected by Textract: %s", vendor_name)
 
     line_items = []
     for group in expense_doc.get("LineItemGroups", []):
         for item in group.get("LineItems", []):
-            fields: dict[str, str] = {}
-            for f in item.get("LineItemExpenseFields", []):
-                ftype = f.get("Type", {}).get("Text", "")
-                fval = f.get("ValueDetection", {}).get("Text", "").strip()
-                if ftype and fval:
-                    fields[ftype] = fval
+            fields = _best_line_item_fields(item.get("LineItemExpenseFields", []))
 
             description = fields.get("ITEM") or fields.get("PRODUCT_CODE") or ""
             if not description:
                 continue  # skip unidentifiable lines
+            ##TODO: Costco have discount line items like this: '/647465' - need to handle it. Otherwise the total does not match
+            if description.startswith("/") or not re.search(r"[a-zA-Z]", description):
+                logger.debug("Skipping non-descriptive line item: %r", description)
+                continue
 
             qty = _parse_number(fields.get("QUANTITY", "1"), default=1.0)
             if qty <= 0:
@@ -199,7 +329,23 @@ def _parse_expense_document(expense_doc: dict) -> tuple[str | None, str | None, 
                 }
             )
 
-    return receipt_date, currency, line_items
+    # Append tax as a synthetic line item if present in summary fields
+    for tax_field in ("TAX", "TOTAL_TAX"):
+        if raw_tax := summary.get(tax_field):
+            tax_amount = _parse_number(raw_tax)
+            if tax_amount > 0:
+                line_items.append(
+                    {
+                        "rawText": f"Tax {raw_tax}",
+                        "description": "Tax",
+                        "qty": 1.0,
+                        "unitPrice": tax_amount,
+                    }
+                )
+                logger.info("Tax line item added | amount=%s", tax_amount)
+                break  # only add once even if both fields are present
+
+    return receipt_date, currency, vendor_name, line_items
 
 
 # ── Core processing ───────────────────────────────────────────────────────────
@@ -263,7 +409,7 @@ def _process_upload(bucket: str, raw_key: str) -> None:
         _update_receipt(meta_key, "error")
         return
 
-    receipt_date, currency, parsed_items = _parse_expense_document(expense_docs[0])
+    receipt_date, currency, vendor_name, parsed_items = _parse_expense_document(expense_docs[0])
     currency = currency or DEFAULT_CURRENCY
 
     if not receipt_date:
@@ -287,10 +433,24 @@ def _process_upload(bucket: str, raw_key: str) -> None:
         _update_receipt(meta_key, "matched")
         return
 
-    # ── Step 3: load Things and Categories for name matching ─────────────────
-    things = _load_json(f"Metadata/accounts/{account_id}/things.json") or []
+    # ── Step 3: load Things, Categories, and Tags for name matching ────────────
+    things_key = f"Metadata/accounts/{account_id}/things.json"
+    things = _load_json(things_key) or []
+    things_dirty = False
     categories = _load_json(f"Metadata/accounts/{account_id}/categories.json") or []
     fallback_cat_id = _default_category_id(categories)
+
+    tags_key = f"Metadata/accounts/{account_id}/tags.json"
+    tags = _load_json(tags_key) or []
+    tags_dirty = False
+
+    vendor_tag_id: str | None = None
+    if vendor_name:
+        vendor_tag, created = _find_or_create_tag(tags, account_id, vendor_name)
+        vendor_tag_id = vendor_tag["id"]
+        if created:
+            tags_dirty = True
+            logger.info("Created vendor tag | tag_id=%s name=%r", vendor_tag_id, vendor_name)
 
     # ── Step 4: build ReceiptLineItems and Transactions ──────────────────────
     now_iso = _now_iso()
@@ -310,9 +470,12 @@ def _process_upload(bucket: str, raw_key: str) -> None:
         line_item_id = str(uuid.uuid4())
         transaction_id = str(uuid.uuid4())
 
-        thing = _find_thing(things, item["description"])
-        thing_id = thing["id"] if thing else None
-        cat_id = (thing.get("defaultCategoryId") if thing else None) or fallback_cat_id
+        thing, thing_created = _find_or_create_thing(things, account_id, item["description"], categories, fallback_cat_id)
+        if thing_created:
+            things_dirty = True
+            logger.info("Created new thing | thing_id=%s name=%r", thing["id"], item["description"])
+        thing_id = thing["id"]
+        cat_id = thing.get("defaultCategoryId") or fallback_cat_id
 
         receipt_line_items.append(
             {
@@ -346,7 +509,7 @@ def _process_upload(bucket: str, raw_key: str) -> None:
                 "createdBy": user_id,
                 "thingId": thing_id,
                 "categoryId": cat_id,
-                "tagIds": [],
+                "tagIds": [vendor_tag_id] if vendor_tag_id else [],
                 "qty": item["qty"],
                 "price": item["unitPrice"],
                 "currency": currency,
@@ -367,7 +530,17 @@ def _process_upload(bucket: str, raw_key: str) -> None:
             item["unitPrice"],
         )
 
-    # ── Step 5: persist line items ────────────────────────────────────────────
+    # ── Step 5: persist things (if new things were created) ──────────────────────
+    if things_dirty:
+        _save_json(things_key, things)
+        logger.info("Saved updated things | account_id=%s", account_id)
+
+    # ── Step 5b: persist tags (if a new vendor tag was created) ────────────────
+    if tags_dirty:
+        _save_json(tags_key, tags)
+        logger.info("Saved updated tags | account_id=%s", account_id)
+
+    # ── Step 6: persist line items ────────────────────────────────────────────
     _save_json(line_items_key, receipt_line_items)
     logger.info(
         "Saved %d line item(s) | receipt_id=%s key=%s",
@@ -376,7 +549,7 @@ def _process_upload(bucket: str, raw_key: str) -> None:
         line_items_key,
     )
 
-    # ── Step 6: persist transactions ──────────────────────────────────────────
+    # ── Step 7: persist transactions ──────────────────────────────────────────
     if transaction_ids:
         _save_json(day_key, day_transactions)
         logger.info(
@@ -391,7 +564,7 @@ def _process_upload(bucket: str, raw_key: str) -> None:
             receipt_id,
         )
 
-    # ── Step 7: mark receipt as matched ──────────────────────────────────────
+    # ── Step 8: mark receipt as matched ──────────────────────────────────────
     _update_receipt(
         meta_key,
         "matched",
@@ -412,3 +585,24 @@ def handler(event, context):
         raw_key = unquote_plus(record["s3"]["object"]["key"])
         logger.info("S3 event received | bucket=%s key=%s", bucket, raw_key)
         _process_upload(bucket, raw_key)
+
+
+# ── Local debug entry point ───────────────────────────────────────────────────
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+
+    event = {
+        "Records": [
+            {
+                "s3": {
+                    "bucket": {"name": S3_BUCKET},
+                    "object": {
+                        "key": "receipts/raw/8df9638b-b13c-43a4-bd5e-c5fc20f8163e/2026/04/f868c09a-1505-4417-a148-cc9cba7a837f.png"
+                    },
+                }
+            }
+        ]
+    }
+
+    handler(event, None)
