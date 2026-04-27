@@ -68,6 +68,8 @@ export default function ViewTransactionsScreen() {
   const navigate = useNavigate()
   const [transactions, setTransactions] = useState([])
   const [categories, setCategories] = useState([])
+  const [things, setThings] = useState([])
+  const [tags, setTags] = useState([])
   const [loading, setLoading] = useState(true)
   const [period, setPeriod] = useState('month')
   const [customFrom, setCustomFrom] = useState('')
@@ -82,12 +84,19 @@ export default function ViewTransactionsScreen() {
     Promise.all([
       api.listTransactions({ year, month }),
       api.listCategories(),
+      api.listThings(),
+      api.listTags(),
     ])
-      .then(([txns, cats]) => {
+      .then(([txns, cats, thingsList, tagsList]) => {
+        console.log('[ViewTransactions] things:', thingsList)
+        console.log('[ViewTransactions] tags:', tagsList)
+        console.log('[ViewTransactions] sample txn:', txns[0])
         setTransactions(txns.sort((a, b) => (b.createdAt > a.createdAt ? 1 : -1)))
         setCategories(cats)
+        setThings(thingsList)
+        setTags(tagsList)
       })
-      .catch(console.error)
+      .catch((err) => console.error('[ViewTransactions] load error:', err))
       .finally(() => setLoading(false))
   }, [year, month])
 
@@ -104,6 +113,8 @@ export default function ViewTransactionsScreen() {
 
   const getCategoryName = (id) => categories.find((c) => c.id === id)?.name ?? ''
   const getCategoryIcon = (id) => categories.find((c) => c.id === id)?.icon ?? '💳'
+  const getThingName = (id) => things.find((th) => th.id === id)?.name ?? null
+  const getTagName = (id) => tags.find((tg) => tg.id === id)?.name ?? id.slice(0, 8)
 
   return (
     <Box style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
@@ -251,7 +262,7 @@ export default function ViewTransactionsScreen() {
                           </Box>
                           <Box>
                             <Text fw={600} style={{ fontSize: 13, color: '#e2e8f0' }}>
-                              {t.categoryId ? getCategoryName(t.categoryId) : 'Transaction'}
+                              {t.thingId ? getThingName(t.thingId) || getCategoryName(t.categoryId) : getCategoryName(t.categoryId) || 'Transaction'}
                             </Text>
                             <Text style={{ fontSize: 11, color: '#475569' }}>
                               {t.qty && t.qty > 1 ? `×${t.qty} · ` : ''}
@@ -286,6 +297,11 @@ export default function ViewTransactionsScreen() {
                             <Text style={{ fontSize: 12, color: '#64748b', marginBottom: 4 }}>
                               Currency: <Text component="span" style={{ color: '#94a3b8' }}>{t.currency || 'USD'}</Text>
                             </Text>
+                            {t.thingId && getThingName(t.thingId) && (
+                              <Text style={{ fontSize: 12, color: '#64748b', marginBottom: 4 }}>
+                                Item: <Text component="span" style={{ color: '#94a3b8' }}>{getThingName(t.thingId)}</Text>
+                              </Text>
+                            )}
                             {t.tagIds?.length > 0 && (
                               <Box style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 6 }}>
                                 {t.tagIds.map((tagId) => (
@@ -298,7 +314,7 @@ export default function ViewTransactionsScreen() {
                                       border: '1px solid #1a4a40',
                                     }}
                                   >
-                                    <Text style={{ fontSize: 11, color: '#4db6ac' }}>#{tagId.slice(0, 8)}</Text>
+                                    <Text style={{ fontSize: 11, color: '#4db6ac' }}>#{getTagName(tagId)}</Text>
                                   </Box>
                                 ))}
                               </Box>
