@@ -35,24 +35,49 @@ function weekStartDate() {
   return d.toISOString().split('T')[0]
 }
 
-function filterByPeriod(txns, period, customFrom, customTo) {
-  const today = new Date().toISOString().split('T')[0]
+// Build the minimum set of API calls for the requested period.
+// The backend handles all filtering — no client-side date filtering needed.
+function buildApiCalls(period, customFrom, customTo) {
+  const now = new Date()
+  const year = now.getFullYear().toString()
+  const month = (now.getMonth() + 1).toString().padStart(2, '0')
+  const today = now.toISOString().split('T')[0]
+
+  if (period === 'year') return [{ year }]
+  if (period === 'month') return [{ year, month }]
+
+  if (period === 'today') return [{ year, from: today, to: today }]
+
+  if (period === 'week') {
+    const from = weekStartDate()
+    const fromYear = from.slice(0, 4)
+    if (fromYear === year) return [{ year, from, to: today }]
+    // week straddles a year boundary (rare – late Dec / early Jan)
+    return [
+      { year: fromYear, from, to: `${fromYear}-12-31` },
+      { year, from: `${year}-01-01`, to: today },
+    ]
+  }
+
   if (period === 'custom') {
-    return txns.filter((t) => {
-      const d = (t.createdAt || '').split('T')[0]
-      return (!customFrom || d >= customFrom) && (!customTo || d <= customTo)
-    })
+    if (!customFrom || !customTo) return []
+    const fromYear = customFrom.slice(0, 4)
+    const toYear = customTo.slice(0, 4)
+    if (fromYear === toYear) return [{ year: fromYear, from: customFrom, to: customTo }]
+    // range spans multiple years — one call per year
+    const calls = []
+    for (let y = parseInt(fromYear); y <= parseInt(toYear); y++) {
+      const yStr = y.toString()
+      calls.push({
+        year: yStr,
+        from: yStr === fromYear ? customFrom : `${yStr}-01-01`,
+        to: yStr === toYear ? customTo : `${yStr}-12-31`,
+      })
+    }
+    return calls
   }
-  const starts = {
-    today,
-    week: weekStartDate(),
-    month: today.slice(0, 7) + '-01',
-    year: today.slice(0, 4) + '-01-01',
-  }
-  return txns.filter((t) => {
-    const d = (t.createdAt || '').split('T')[0]
-    return d >= starts[period] && d <= today
-  })
+
+  return []
 }
 
 function groupByDate(txns) {
@@ -71,46 +96,53 @@ export default function ViewTransactionsScreen() {
   const [things, setThings] = useState([])
   const [tags, setTags] = useState([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
   const [period, setPeriod] = useState('month')
   const [customFrom, setCustomFrom] = useState('')
   const [customTo, setCustomTo] = useState('')
   const [expandedId, setExpandedId] = useState(null)
 
-  const now = new Date()
-  const year = now.getFullYear().toString()
-  const month = (now.getMonth() + 1).toString().padStart(2, '0')
-
+  // Static lookup data – fetch once
   useEffect(() => {
-    Promise.all([
-      api.listTransactions({ year, month }),
-      api.listCategories(),
-      api.listThings(),
-      api.listTags(),
-    ])
-      .then(([txns, cats, thingsList, tagsList]) => {
-        console.log('[ViewTransactions] things:', thingsList)
-        console.log('[ViewTransactions] tags:', tagsList)
-        console.log('[ViewTransactions] sample txn:', txns[0])
-        setTransactions(txns.sort((a, b) => (b.createdAt > a.createdAt ? 1 : -1)))
+    Promise.all([api.listCategories(), api.listThings(), api.listTags()])
+      .then(([cats, thingsList, tagsList]) => {
         setCategories(cats)
         setThings(thingsList)
         setTags(tagsList)
       })
-      .catch((err) => console.error('[ViewTransactions] load error:', err))
+      .catch((err) => {
+        console.error('[ViewTransactions] lookup error:', err)
+        setError('Failed to load categories or tags. ' + (err.message || ''))
+      })
+  }, [])
+
+  // Transactions – re-fetch whenever the period or custom range changes
+  useEffect(() => {
+    const calls = buildApiCalls(period, customFrom, customTo)
+    if (calls.length === 0) return
+
+    setLoading(true)
+    setError(null)
+    Promise.all(calls.map((params) => api.listTransactions(params)))
+      .then((arrays) => {
+        const all = arrays.flat().sort((a, b) => (b.createdAt > a.createdAt ? 1 : -1))
+        setTransactions(all)
+      })
+      .catch((err) => {
+        setError('Failed to load transactions. ' + (err.message || ''))
+      })
       .finally(() => setLoading(false))
-  }, [year, month])
+  }, [period, customFrom, customTo])
 
-  const filtered = filterByPeriod(transactions, period, customFrom, customTo)
-  const grouped = groupByDate(filtered)
+  const grouped = groupByDate(transactions)
 
-  const totalIncome = filtered
+  const totalIncome = transactions
     .filter((t) => t.type === 'income')
     .reduce((s, t) => s + (t.qty ?? 1) * (t.price ?? 0), 0)
-  const totalExpense = filtered
+  const totalExpense = transactions
     .filter((t) => t.type !== 'income')
     .reduce((s, t) => s + (t.qty ?? 1) * (t.price ?? 0), 0)
   const net = totalIncome - totalExpense
-
   const getCategoryName = (id) => categories.find((c) => c.id === id)?.name ?? ''
   const getCategoryIcon = (id) => categories.find((c) => c.id === id)?.icon ?? '💳'
   const getThingName = (id) => things.find((th) => th.id === id)?.name ?? null
@@ -203,7 +235,13 @@ export default function ViewTransactionsScreen() {
 
       {/* Transaction list */}
       <Box style={{ flex: 1, overflowY: 'auto', padding: '16px 24px 24px' }}>
-        {loading ? (
+        {error ? (
+          <Box style={{ textAlign: 'center', paddingTop: 48 }}>
+            <Text style={{ fontSize: 32, marginBottom: 12 }}>⚠️</Text>
+            <Text style={{ color: '#f87171', fontSize: 14, marginBottom: 4 }}>Something went wrong</Text>
+            <Text style={{ color: '#475569', fontSize: 12 }}>{error}</Text>
+          </Box>
+        ) : loading ? (
           <Box style={{ textAlign: 'center', paddingTop: 48 }}>
             <Text style={{ color: '#475569', fontSize: 14 }}>Loading…</Text>
           </Box>

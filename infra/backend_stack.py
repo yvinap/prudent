@@ -336,7 +336,9 @@ class BackendStack(cdk.Stack):
         transactions_integration = apigw.LambdaIntegration(transactions_fn)
         transactions_resource.add_method("POST", transactions_integration, **auth_kwargs)
         transactions_resource.add_method("GET", apigw.LambdaIntegration(view_transactions_fn), **auth_kwargs)
-        transactions_resource.add_resource("{transactionId}").add_method("PUT", transactions_integration, **auth_kwargs)
+        transaction_id_resource = transactions_resource.add_resource("{transactionId}")
+        transaction_id_resource.add_method("PUT", transactions_integration, **auth_kwargs)
+        transaction_id_resource.add_method("DELETE", transactions_integration, **auth_kwargs)
 
         receipts_resource = api.root.add_resource("receipts")
         receipts_resource.add_method("POST", apigw.LambdaIntegration(scan_receipt_fn), **auth_kwargs)

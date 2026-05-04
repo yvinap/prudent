@@ -66,6 +66,7 @@ export const api = {
     request('GET', '/transactions?' + new URLSearchParams(params)),
   createTransaction: (data) => request('POST', '/transactions', data),
   updateTransaction: (id, data) => request('PUT', `/transactions/${id}`, data),
+  deleteTransaction: (id, data) => request('DELETE', `/transactions/${id}`, data),
 
   // Receipts — returns { receipt, uploadUrl }
   initiateReceiptUpload: (contentType) =>

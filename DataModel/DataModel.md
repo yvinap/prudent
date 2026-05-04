@@ -2,7 +2,7 @@
 
 Prudent is a personal expense tracking application. Data is stored in S3 using a structured folder hierarchy. All records use ISO 8601 timestamps (`YYYY-MM-DDTHH:mm:ssZ`) and GUIDs for IDs.
 
-> **Cost optimisation (Option A):** Reference data (things, tags, categories, budgets) is stored as a single aggregated JSON array per account rather than one file per record. Transactions and audit logs are aggregated into one file per day. This dramatically reduces S3 API calls — loading a month of transactions costs 30 GETs instead of hundreds — while keeping the architecture entirely within S3.
+> **Cost optimisation (Option A):** Reference data (things, tags, categories, budgets) is stored as a single aggregated JSON array per account rather than one file per record. Transactions are aggregated into one file per year using a `{month → {day → [transactions]}}` structure. Audit logs are aggregated into one file per day. This dramatically reduces S3 API calls — loading a full year of transactions costs **1 GET** regardless of volume — while keeping the architecture entirely within S3.
 
 ---
 
@@ -23,9 +23,7 @@ s3://prudent-data/
 │          └── invites.json          ← ALL pending/accepted invites for the account
 ├── Transactions/
 │   └── {accountId}/
-│       └── {year}/
-│           └── {month}/
-│               └── {date}.json       ← ALL transactions for the day in one file
+│       └── {year}.json               ← ALL transactions for the year, keyed by month → day
 ├── Receipts/
 │   └── {accountId}/
 │       └── {year}/
@@ -188,35 +186,45 @@ The primary classification of a transaction. Every transaction has exactly one c
 ---
 
 ### Transaction
-**Path:** `Transactions/{accountId}/{year}/{month}/{date}.json`
+**Path:** `Transactions/{accountId}/{year}.json`
 
-All transactions for a given day are stored together in a single JSON array. To add or update a transaction, GET the day file, modify the array, then PUT it back. For a personal expense tracker the write volume per day is low, making this read-modify-write pattern acceptable.
+All transactions for a given year are stored in a single JSON object keyed by zero-padded month, then zero-padded day, with each day holding an array of transaction records. To add or update a transaction, GET the year file, modify the relevant day array, then PUT it back. For a personal expense tracker the write volume per day is low, making this read-modify-write pattern acceptable. Loading the entire year costs exactly **1 GET**.
 
 ```json
-[
-  {
-    "id": "guid",
-    "accountId": "guid",
-    "createdBy": "user-guid",
-    "thingId": "guid",
-    "categoryId": "guid",
-    "tagIds": ["guid", "guid"],
-    "qty": 1,
-    "price": 10.00,
-    "currency": "USD",
-    "receiptId": "guid",
-    "receiptLineItemId": "guid",
-    "createdAt": "2026-01-02T10:00:00Z",
-    "updatedAt": "2026-01-02T10:00:00Z"
+{
+  "01": {
+    "02": [
+      {
+        "id": "guid",
+        "accountId": "guid",
+        "createdBy": "user-guid",
+        "type": "expense",
+        "transactionDate": "2026-01-02",
+        "thingId": "guid",
+        "categoryId": "guid",
+        "tagIds": ["guid", "guid"],
+        "qty": 1,
+        "price": 10.00,
+        "currency": "USD",
+        "receiptId": "guid",
+        "receiptLineItemId": "guid",
+        "createdAt": "2026-01-02T10:00:00Z",
+        "updatedAt": "2026-01-02T10:00:00Z"
+      }
+    ]
   }
-]
+}
 ```
+
+> **Key format:** months and days are always zero-padded two-digit strings (`"01"` – `"12"` for months, `"01"` – `"31"` for days). Days with no transactions are omitted entirely.
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `id` | GUID | Unique identifier |
 | `accountId` | GUID | Account this transaction belongs to |
 | `createdBy` | GUID | User ID of who recorded the transaction |
+| `type` | string | `expense` or `income` |
+| `transactionDate` | YYYY-MM-DD | The actual date the transaction occurred; drives S3 file placement and is the authoritative date for filtering and display |
 | `thingId` | GUID | Reference to the purchased thing |
 | `categoryId` | GUID | Primary category for this transaction (required) |
 | `tagIds` | GUID[] | Zero or more tag IDs for secondary labelling |
@@ -489,10 +497,10 @@ Budget >── Tag       (tagId — null if category-scoped)
 | Decision | Rationale |
 |----------|-----------|
 | Aggregated things/tags/categories/budgets per account | All reference data for an account loads in 4 GETs regardless of how many records exist; suitable because this data is small and rarely changes |
-| Aggregated transactions per day | Loading a full month costs 28–31 GETs instead of one GET per transaction; personal expense trackers have low daily write volume, making read-modify-write acceptable |
+| Aggregated transactions per year | Loading a full year costs 1 GET regardless of transaction volume; the file uses a `{month → {day → [transactions]}}` object so any calendar slice can be filtered client-side after a single fetch; personal expense trackers have low daily write volume, making read-modify-write acceptable |
 | Aggregated audit logs per day | Write-once append pattern; logs are rarely queried live so read-modify-write cost is acceptable |
 | Aggregated line items per receipt | A receipt has a bounded, small number of lines; loading them all in one GET is always correct |
-| Year/month/date folder hierarchy | Supports efficient S3 prefix-based queries by time range |
+| Year folder hierarchy for transactions | Year is encoded in the filename (`{year}.json`) under the account prefix, enabling targeted single-file access per year |
 | Tags scoped to account | Prevents tag collisions across unrelated accounts; used for free-form secondary labelling |
 | `Thing.defaultCategoryId` as optional hint | Enables the UI to auto-select the most likely category when a thing is chosen, reducing taps per transaction; `Transaction.categoryId` remains the authoritative value and can always be overridden |
 | Category as a separate entity from Tag | Transactions need exactly one primary classification with icon/colour for charts; tags remain free-form and multi-value |

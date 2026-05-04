@@ -1,17 +1,24 @@
 """
 GET /transactions
 
-Query parameters:
-  year   (string, optional – defaults to current year,  e.g. "2026")
-  month  (string, optional – defaults to current month, e.g. "04")
-  date   (string, optional – if provided, returns only that day, e.g. "10")
+Query parameters (all optional):
+  year   (string – defaults to current year, e.g. "2026")
+  month  (string – zero-padded; if provided, returns only that month, e.g. "04")
+  from   (string – start date YYYY-MM-DD, inclusive; requires 'to')
+  to     (string – end date   YYYY-MM-DD, inclusive; requires 'from')
 
-Returns a JSON array of transactions for the requested period.
-If only year+month are given, all day files for the month are merged.
+Priority: from/to range > month > year-only (all months).
+Both 'from' and 'to' must fall within the same 'year'.
+
+Transactions are stored per year: Transactions/{accountId}/{year}.json
+Structure: { "MM": { "DD": [ ...transactions ] } }
+
+Returns a flat, chronologically sorted JSON array.
+Returns [] if no data exists for the requested period.
 """
 import json
 import os
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 import boto3
 from botocore.exceptions import ClientError
@@ -33,20 +40,79 @@ def _response(status: int, body) -> dict:
     }
 
 
+def _load_year(account_id: str, year: str) -> dict:
+    """Load the year file. Returns {} without error if the file does not exist."""
+    key = f"Transactions/{account_id}/{year}.json"
+    try:
+        obj = s3.get_object(Bucket=S3_BUCKET, Key=key)
+        return json.loads(obj["Body"].read())
+    except ClientError as exc:
+        if exc.response["Error"]["Code"] == "NoSuchKey":
+            return {}
+        raise
+
+
+def _flatten(year_data: dict, month_filter: str = None,
+             from_date: date = None, to_date: date = None) -> list:
+    """Flatten year_data into a list, applying the supplied filter."""
+    result = []
+    for mm, days in year_data.items():
+        if month_filter and mm != month_filter:
+            continue
+        for dd, txns in days.items():
+            if from_date is not None or to_date is not None:
+                try:
+                    ref_year = (from_date or to_date).year
+                    txn_date = date(ref_year, int(mm), int(dd))
+                except ValueError:
+                    continue
+                if from_date and txn_date < from_date:
+                    continue
+                if to_date and txn_date > to_date:
+                    continue
+            result.extend(txns)
+    return result
+
+
 def handler(event, context):
     user_id = event["requestContext"]["authorizer"]["claims"]["sub"]
 
     params = event.get("queryStringParameters") or {}
     now = datetime.now(timezone.utc)
     year = params.get("year", now.strftime("%Y"))
-    month = params.get("month", now.strftime("%m"))
-    date = params.get("date")
+    month = params.get("month")
+    from_str = params.get("from")
+    to_str = params.get("to")
 
-    # Sanitise – only digits allowed to prevent path traversal
-    if not (year.isdigit() and month.isdigit() and (date is None or date.isdigit())):
-        return _response(400, {"error": "year, month, and date must be numeric"})
+    # Guard against path traversal
+    if not year.isdigit():
+        return _response(400, {"error": "year must be numeric"})
+    if month is not None and not month.isdigit():
+        return _response(400, {"error": "month must be numeric"})
 
-    user_obj = s3.get_object(Bucket=S3_BUCKET, Key=f"Metadata/users/{user_id}.json")
+    # Validate date range when either param is supplied
+    from_date = None
+    to_date = None
+    if from_str or to_str:
+        if not (from_str and to_str):
+            return _response(400, {"error": "Both 'from' and 'to' are required when using a date range"})
+        try:
+            from_date = datetime.strptime(from_str, "%Y-%m-%d").date()
+            to_date = datetime.strptime(to_str, "%Y-%m-%d").date()
+        except ValueError:
+            return _response(400, {"error": "'from' and 'to' must be YYYY-MM-DD"})
+        if from_date > to_date:
+            return _response(400, {"error": "'from' must not be after 'to'"})
+        if str(from_date.year) != year or str(to_date.year) != year:
+            return _response(400, {"error": "'from' and 'to' must both fall within the requested year"})
+
+    # Resolve account
+    try:
+        user_obj = s3.get_object(Bucket=S3_BUCKET, Key=f"Metadata/users/{user_id}.json")
+    except ClientError as exc:
+        if exc.response["Error"]["Code"] == "NoSuchKey":
+            return _response(404, {"error": "User not found"})
+        raise
     user = json.loads(user_obj["Body"].read())
     account_ids = user.get("accountIds") or ([user["accountId"]] if user.get("accountId") else [])
     if not account_ids:
@@ -57,29 +123,13 @@ def handler(event, context):
         return _response(403, {"error": "Account not accessible"})
     account_id = requested if requested else account_ids[0]
 
-    transactions = []
+    year_data = _load_year(account_id, year)
 
-    if date:
-        key = f"Transactions/{account_id}/{year}/{month}/{date}.json"
-        try:
-            obj = s3.get_object(Bucket=S3_BUCKET, Key=key)
-            transactions = json.loads(obj["Body"].read())
-        except ClientError as exc:
-            if exc.response["Error"]["Code"] != "NoSuchKey":
-                raise
-    else:
-        # Fetch all day files for the month
-        prefix = f"Transactions/{account_id}/{year}/{month}/"
-        paginator = s3.get_paginator("list_objects_v2")
-        for page in paginator.paginate(Bucket=S3_BUCKET, Prefix=prefix):
-            for item in page.get("Contents", []):
-                try:
-                    obj = s3.get_object(Bucket=S3_BUCKET, Key=item["Key"])
-                    transactions.extend(json.loads(obj["Body"].read()))
-                except ClientError:
-                    pass  # skip any unreadable day file
+    # Normalise month to zero-padded string if supplied
+    month_filter = f"{int(month):02d}" if month else None
 
-    # Sort chronologically before returning
-    transactions.sort(key=lambda t: t.get("createdAt", ""))
+    transactions = _flatten(year_data, month_filter=month_filter,
+                            from_date=from_date, to_date=to_date)
+    transactions.sort(key=lambda t: t.get("transactionDate") or t.get("createdAt", ""))
 
     return _response(200, transactions)

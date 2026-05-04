@@ -225,6 +225,7 @@ export default function AddTransactionScreen() {
     try {
       await api.createTransaction({
         type,
+        transactionDate: date,
         thingId: selectedThing?.id ?? null,
         categoryId: selectedCategoryId || selectedThing?.defaultCategoryId || null,
         qty: parseFloat(quantity) || 1,

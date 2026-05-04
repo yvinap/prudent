@@ -1,6 +1,10 @@
 """
-POST /transactions                    → add a new Transaction
-PUT  /transactions/{transactionId}    → update an existing Transaction
+POST   /transactions                  → create a Transaction
+PUT    /transactions/{transactionId}  → update a Transaction
+DELETE /transactions/{transactionId}  → delete a Transaction
+
+Transactions are stored per year: Transactions/{accountId}/{year}.json
+Structure: { "MM": { "DD": [ ...transactions ] } }
 
 POST body:
   thingId           (string, required if categoryId absent)
@@ -8,15 +12,21 @@ POST body:
   qty               (number, required, positive)
   price             (number, required, non-negative)
   currency          (string, required – ISO 4217, e.g. "USD")
+  transactionDate   (string, optional – YYYY-MM-DD, the actual date of the
+                    transaction; defaults to today when omitted, e.g. Quick Add)
   tagIds            (string[], optional)
   receiptId         (string, optional)
   receiptLineItemId (string, optional)
 
 PUT body (all optional – omitted fields unchanged):
-  thingId / categoryId / tagIds / qty / price / currency
+  thingId / categoryId / tagIds / qty / price / currency / transactionDate
   receiptId / receiptLineItemId
-  createdAt (string, required – YYYY-MM-DD or YYYY-MM-DDTHH:MM:SSZ,
-             used to locate the correct day file)
+  transactionDate (string, required – YYYY-MM-DD, used to locate the correct
+                  year file and day slot)
+
+DELETE body:
+  transactionDate (string, required – YYYY-MM-DD, used to locate the correct
+                  year file and day slot)
 """
 import json
 import os
@@ -32,7 +42,7 @@ s3 = boto3.client("s3")
 
 _UPDATABLE = {
     "thingId", "categoryId", "tagIds", "qty", "price",
-    "currency", "receiptId", "receiptLineItemId", "type",
+    "currency", "receiptId", "receiptLineItemId", "type", "transactionDate",
 }
 
 
@@ -66,20 +76,29 @@ def _resolve_account_id(user_id: str, event: dict) -> str:
     return account_ids[0]
 
 
-def _day_key(account_id: str, created_at: str) -> str:
+def _year_key(account_id: str, year: int) -> str:
+    return f"Transactions/{account_id}/{year:04d}.json"
+
+
+def _parse_created_at(created_at: str) -> datetime:
     if len(created_at) == 10:
         created_at += "T00:00:00Z"
-    dt = datetime.strptime(created_at, "%Y-%m-%dT%H:%M:%SZ")
-    return f"Transactions/{account_id}/{dt.year:04d}/{dt.month:02d}/{dt.day:02d}.json"
+    return datetime.strptime(created_at, "%Y-%m-%dT%H:%M:%SZ")
 
 
-def _load_day(key: str):
+def _parse_transaction_date(date_str: str) -> datetime:
+    """Parse a YYYY-MM-DD transaction date."""
+    return datetime.strptime(date_str.strip()[:10], "%Y-%m-%d")
+
+
+def _load_year(key: str) -> dict:
+    """Load the year file. Returns {} without error if the file does not exist."""
     try:
         obj = s3.get_object(Bucket=S3_BUCKET, Key=key)
         return json.loads(obj["Body"].read())
     except ClientError as exc:
         if exc.response["Error"]["Code"] == "NoSuchKey":
-            return []
+            return {}
         raise
 
 
@@ -103,15 +122,32 @@ def _create(body: dict, account_id: str, user_id: str) -> dict:
 
     now = datetime.now(timezone.utc)
     now_iso = now.strftime("%Y-%m-%dT%H:%M:%SZ")
-    day_key = f"Transactions/{account_id}/{now.year:04d}/{now.month:02d}/{now.day:02d}.json"
 
-    transactions = _load_day(day_key)
+    # transactionDate is the actual date of the transaction (YYYY-MM-DD).
+    # It drives the S3 file placement. Defaults to today when not supplied
+    # (Quick Add path never sends it).
+    raw_txn_date = body.get("transactionDate")
+    if raw_txn_date:
+        try:
+            txn_dt = _parse_transaction_date(raw_txn_date)
+        except ValueError:
+            return _response(400, {"error": "transactionDate must be YYYY-MM-DD"})
+        transaction_date = txn_dt.strftime("%Y-%m-%d")
+    else:
+        txn_dt = now
+        transaction_date = now.strftime("%Y-%m-%d")
+
+    mm = f"{txn_dt.month:02d}"
+    dd = f"{txn_dt.day:02d}"
+    key = _year_key(account_id, txn_dt.year)
+    year_data = _load_year(key)
 
     new_txn = {
         "id": str(uuid.uuid4()),
         "accountId": account_id,
         "createdBy": user_id,
         "type": body.get("type", "expense"),
+        "transactionDate": transaction_date,
         "thingId": body.get("thingId"),
         "categoryId": body.get("categoryId"),
         "tagIds": tag_ids,
@@ -123,9 +159,9 @@ def _create(body: dict, account_id: str, user_id: str) -> dict:
         "createdAt": now_iso,
         "updatedAt": now_iso,
     }
-    transactions.append(new_txn)
 
-    s3.put_object(Bucket=S3_BUCKET, Key=day_key, Body=json.dumps(transactions), ContentType="application/json")
+    year_data.setdefault(mm, {}).setdefault(dd, []).append(new_txn)
+    s3.put_object(Bucket=S3_BUCKET, Key=key, Body=json.dumps(year_data), ContentType="application/json")
     return _response(201, new_txn)
 
 
@@ -139,20 +175,25 @@ def _update(body: dict, account_id: str, transaction_id: str) -> dict:
     if body.get("thingId") == "" and body.get("categoryId") == "":
         return _response(400, {"error": "At least one of thingId or categoryId must be set"})
 
-    created_at = body.get("createdAt")
-    if not created_at:
-        return _response(400, {"error": "createdAt is required to locate the transaction"})
+    txn_date = body.get("transactionDate")
+    if not txn_date:
+        return _response(400, {"error": "transactionDate is required to locate the transaction"})
 
     try:
-        day_key = _day_key(account_id, created_at)
+        dt = _parse_transaction_date(txn_date)
     except ValueError:
-        return _response(400, {"error": "createdAt must be YYYY-MM-DD or YYYY-MM-DDTHH:MM:SSZ"})
+        return _response(400, {"error": "transactionDate must be YYYY-MM-DD"})
 
-    transactions = _load_day(day_key)
-    if not transactions:
+    mm = f"{dt.month:02d}"
+    dd = f"{dt.day:02d}"
+    key = _year_key(account_id, dt.year)
+    year_data = _load_year(key)
+
+    day_txns = year_data.get(mm, {}).get(dd, [])
+    if not day_txns:
         return _response(404, {"error": "Transaction not found"})
 
-    target = next((t for t in transactions if t["id"] == transaction_id), None)
+    target = next((t for t in day_txns if t["id"] == transaction_id), None)
     if target is None:
         return _response(404, {"error": "Transaction not found"})
     if target["accountId"] != account_id:
@@ -163,8 +204,42 @@ def _update(body: dict, account_id: str, transaction_id: str) -> dict:
             target[field] = body[field].strip().upper() if field == "currency" else body[field]
     target["updatedAt"] = _now_iso()
 
-    s3.put_object(Bucket=S3_BUCKET, Key=day_key, Body=json.dumps(transactions), ContentType="application/json")
+    s3.put_object(Bucket=S3_BUCKET, Key=key, Body=json.dumps(year_data), ContentType="application/json")
     return _response(200, target)
+
+
+def _delete(body: dict, account_id: str, transaction_id: str) -> dict:
+    txn_date = body.get("transactionDate")
+    if not txn_date:
+        return _response(400, {"error": "transactionDate is required to locate the transaction"})
+
+    try:
+        dt = _parse_transaction_date(txn_date)
+    except ValueError:
+        return _response(400, {"error": "transactionDate must be YYYY-MM-DD"})
+
+    mm = f"{dt.month:02d}"
+    dd = f"{dt.day:02d}"
+    key = _year_key(account_id, dt.year)
+    year_data = _load_year(key)
+
+    month_data = year_data.get(mm, {})
+    day_txns = month_data.get(dd, [])
+    original_len = len(day_txns)
+    filtered = [t for t in day_txns if not (t["id"] == transaction_id and t["accountId"] == account_id)]
+
+    if len(filtered) == original_len:
+        return _response(404, {"error": "Transaction not found"})
+
+    if filtered:
+        year_data[mm][dd] = filtered
+    else:
+        month_data.pop(dd, None)
+        if not month_data:
+            year_data.pop(mm, None)
+
+    s3.put_object(Bucket=S3_BUCKET, Key=key, Body=json.dumps(year_data), ContentType="application/json")
+    return _response(200, {})
 
 
 def handler(event, context):
@@ -188,10 +263,12 @@ def handler(event, context):
     if method == "POST":
         return _create(body, account_id, user_id)
 
-    if method == "PUT":
+    if method in ("PUT", "DELETE"):
         transaction_id = (event.get("pathParameters") or {}).get("transactionId")
         if not transaction_id:
             return _response(400, {"error": "transactionId path parameter is required"})
-        return _update(body, account_id, transaction_id)
+        if method == "PUT":
+            return _update(body, account_id, transaction_id)
+        return _delete(body, account_id, transaction_id)
 
     return _response(405, {"error": "Method not allowed"})
