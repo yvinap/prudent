@@ -89,6 +89,13 @@ def _textract_response(
     }
 
 
+def _first_txn(year_body: dict) -> dict:
+    """Return the first transaction in a year-file body shaped {mm: {dd: [...]}}."""
+    mm = next(iter(year_body))
+    dd = next(iter(year_body[mm]))
+    return year_body[mm][dd][0]
+
+
 class TestParseReceipt(unittest.TestCase):
 
     def setUp(self):
@@ -97,19 +104,21 @@ class TestParseReceipt(unittest.TestCase):
         mod.s3 = self.s3
         mod.textract = self.textract
 
-    def _set_s3_get(self, receipt=None, things=None, categories=None, day=None):
+    def _set_s3_get(self, receipt=None, things=None, categories=None, tags=None, year=None):
         """Configure s3.get_object side_effect in call order."""
         receipt = receipt if receipt is not None else _receipt()
         things = things if things is not None else []
         categories = categories if categories is not None else [
             {"id": "cat-1", "name": "Groceries"}
         ]
-        day = day if day is not None else []
+        tags = tags if tags is not None else []
+        year = year if year is not None else {}
         responses = [
             s3_body(receipt),   # load receipt meta (first call in _update_receipt)
             s3_body(things),    # things.json
             s3_body(categories),# categories.json
-            s3_body(day),       # day transactions file
+            s3_body(tags),      # tags.json
+            s3_body(year),      # year transactions file
         ]
         # Second update_receipt call (step 7) also reads the receipt
         responses.append(s3_body({**receipt, "status": "parsing"}))
@@ -138,12 +147,17 @@ class TestParseReceipt(unittest.TestCase):
         self._set_s3_get()
         self.textract.analyze_expense.return_value = _textract_response(date_str="01/02/2026")
         mod.handler(_s3_event(), None)
-        # The day file write should have used 2026-01-02 in the key
-        all_keys = [
-            c.kwargs.get("Key", "") for c in self.s3.put_object.call_args_list
+        # The year file write should target 2026.json with txn under "01"->"02"
+        year_writes = [
+            c for c in self.s3.put_object.call_args_list
+            if c.kwargs.get("Key", "").startswith("Transactions/")
         ]
-        day_keys = [k for k in all_keys if k.startswith("Transactions/")]
-        self.assertTrue(any("2026/01/02" in k for k in day_keys))
+        self.assertTrue(any(c.kwargs["Key"].endswith("/2026.json") for c in year_writes))
+        body = json.loads(year_writes[0].kwargs["Body"])
+        self.assertIn("01", body)
+        self.assertIn("02", body["01"])
+        self.assertEqual(body["01"]["02"][0]["transactionDate"], "2026-01-02")
+        self.assertEqual(body["01"]["02"][0]["type"], "expense")
 
     def test_transaction_contains_receipt_id(self):
         self._set_s3_get()
@@ -154,8 +168,8 @@ class TestParseReceipt(unittest.TestCase):
             c for c in self.s3.put_object.call_args_list
             if c.kwargs.get("Key", "").startswith("Transactions/")
         )
-        txns = json.loads(day_write.kwargs["Body"])
-        self.assertEqual(txns[0]["receiptId"], RECEIPT_ID)
+        txn = _first_txn(json.loads(day_write.kwargs["Body"]))
+        self.assertEqual(txn["receiptId"], RECEIPT_ID)
 
     def test_line_items_saved_with_raw_text_and_resolved_fields(self):
         self._set_s3_get()
@@ -180,8 +194,8 @@ class TestParseReceipt(unittest.TestCase):
             c for c in self.s3.put_object.call_args_list
             if c.kwargs.get("Key", "").startswith("Transactions/")
         )
-        txns = json.loads(day_write.kwargs["Body"])
-        self.assertEqual(txns[0]["currency"], "GBP")
+        txn = _first_txn(json.loads(day_write.kwargs["Body"]))
+        self.assertEqual(txn["currency"], "GBP")
 
     # ──────────────────────────────────────────────────────────────────────────
     # Date fallback
@@ -224,7 +238,7 @@ class TestParseReceipt(unittest.TestCase):
             c for c in self.s3.put_object.call_args_list
             if c.kwargs.get("Key", "").startswith("Transactions/")
         )
-        txn = json.loads(day_write.kwargs["Body"])[0]
+        txn = _first_txn(json.loads(day_write.kwargs["Body"]))
         self.assertEqual(txn["thingId"], "thing-1")
         self.assertEqual(txn["categoryId"], "cat-milk")
 
@@ -238,7 +252,7 @@ class TestParseReceipt(unittest.TestCase):
             c for c in self.s3.put_object.call_args_list
             if c.kwargs.get("Key", "").startswith("Transactions/")
         )
-        txn = json.loads(day_write.kwargs["Body"])[0]
+        txn = _first_txn(json.loads(day_write.kwargs["Body"]))
         self.assertIsNone(txn["thingId"])
         self.assertEqual(txn["categoryId"], "cat-1")
 
@@ -281,7 +295,7 @@ class TestParseReceipt(unittest.TestCase):
             c for c in self.s3.put_object.call_args_list
             if c.kwargs.get("Key", "").startswith("Transactions/")
         )
-        txn = json.loads(day_write.kwargs["Body"])[0]
+        txn = _first_txn(json.loads(day_write.kwargs["Body"]))
         self.assertAlmostEqual(txn["price"], 0.5)
 
     def test_unit_price_field_preferred_over_total_price(self):
@@ -302,7 +316,7 @@ class TestParseReceipt(unittest.TestCase):
             c for c in self.s3.put_object.call_args_list
             if c.kwargs.get("Key", "").startswith("Transactions/")
         )
-        txn = json.loads(day_write.kwargs["Body"])[0]
+        txn = _first_txn(json.loads(day_write.kwargs["Body"]))
         self.assertAlmostEqual(txn["price"], 2.50)
 
     # ──────────────────────────────────────────────────────────────────────────
