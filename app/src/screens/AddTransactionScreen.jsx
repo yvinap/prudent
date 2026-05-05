@@ -3,6 +3,13 @@ import { useNavigate } from 'react-router-dom'
 import { Box, Text, Button, Group, UnstyledButton } from '@mantine/core'
 import { api } from '../lib/api'
 
+function toLocalDateStr(d) {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
 const BASE_INPUT = {
   width: '100%',
   padding: '10px 14px',
@@ -186,7 +193,7 @@ export default function AddTransactionScreen() {
   const navigate = useNavigate()
 
   const [type, setType] = useState('expense')
-  const [date, setDate] = useState(new Date().toISOString().split('T')[0])
+  const [date, setDate] = useState(toLocalDateStr(new Date()))
   const [thingName, setThingName] = useState('')
   const [selectedCategoryId, setSelectedCategoryId] = useState('')
   const [selectedTags, setSelectedTags] = useState([])

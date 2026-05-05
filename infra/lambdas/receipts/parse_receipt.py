@@ -454,14 +454,13 @@ def _process_upload(bucket: str, raw_key: str) -> None:
 
     # ── Step 4: build ReceiptLineItems and Transactions ──────────────────────
     now_iso = _now_iso()
-    receipt_date_iso = f"{receipt_date}T00:00:00Z"
 
     dt = datetime.strptime(receipt_date, "%Y-%m-%d")
-    day_key = (
-        f"Transactions/{account_id}"
-        f"/{dt.year:04d}/{dt.month:02d}/{dt.day:02d}.json"
-    )
-    day_transactions = _load_json(day_key) or []
+    year_key = f"Transactions/{account_id}/{dt.year:04d}.json"
+    mm = f"{dt.month:02d}"
+    dd = f"{dt.day:02d}"
+    year_data = _load_json(year_key) or {}
+    day_transactions = year_data.setdefault(mm, {}).setdefault(dd, [])
 
     receipt_line_items = []
     transaction_ids = []
@@ -507,6 +506,8 @@ def _process_upload(bucket: str, raw_key: str) -> None:
                 "id": transaction_id,
                 "accountId": account_id,
                 "createdBy": user_id,
+                "type": "expense",
+                "transactionDate": receipt_date,
                 "thingId": thing_id,
                 "categoryId": cat_id,
                 "tagIds": [vendor_tag_id] if vendor_tag_id else [],
@@ -515,7 +516,7 @@ def _process_upload(bucket: str, raw_key: str) -> None:
                 "currency": currency,
                 "receiptId": receipt_id,
                 "receiptLineItemId": line_item_id,
-                "createdAt": receipt_date_iso,
+                "createdAt": now_iso,
                 "updatedAt": now_iso,
             }
         )
@@ -551,12 +552,14 @@ def _process_upload(bucket: str, raw_key: str) -> None:
 
     # ── Step 7: persist transactions ──────────────────────────────────────────
     if transaction_ids:
-        _save_json(day_key, day_transactions)
+        _save_json(year_key, year_data)
         logger.info(
-            "Saved %d transaction(s) | receipt_id=%s day_key=%s",
+            "Saved %d transaction(s) | receipt_id=%s year_key=%s month=%s day=%s",
             len(transaction_ids),
             receipt_id,
-            day_key,
+            year_key,
+            mm,
+            dd,
         )
     else:
         logger.warning(

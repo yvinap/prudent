@@ -3,6 +3,13 @@ import { useNavigate } from 'react-router-dom'
 import { Box, Text, Group, UnstyledButton } from '@mantine/core'
 import { api } from '../lib/api'
 
+function toLocalDateStr(d) {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
 const PERIODS = ['today', 'week', 'month', 'year', 'custom']
 const PERIOD_LABELS = { today: 'Today', week: 'Week', month: 'Month', year: 'Year', custom: 'Custom' }
 
@@ -21,8 +28,8 @@ const DATE_INPUT = {
 }
 
 function fmtDate(d) {
-  const today = new Date().toISOString().split('T')[0]
-  const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0]
+  const today = toLocalDateStr(new Date())
+  const yesterday = toLocalDateStr(new Date(Date.now() - 86400000))
   if (d === today) return 'Today'
   if (d === yesterday) return 'Yesterday'
   return new Date(d + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
@@ -32,7 +39,7 @@ function weekStartDate() {
   const d = new Date()
   const day = d.getDay()
   d.setDate(d.getDate() - (day === 0 ? 6 : day - 1))
-  return d.toISOString().split('T')[0]
+  return toLocalDateStr(d)
 }
 
 // Build the minimum set of API calls for the requested period.
@@ -41,7 +48,7 @@ function buildApiCalls(period, customFrom, customTo) {
   const now = new Date()
   const year = now.getFullYear().toString()
   const month = (now.getMonth() + 1).toString().padStart(2, '0')
-  const today = now.toISOString().split('T')[0]
+  const today = toLocalDateStr(now)
 
   if (period === 'year') return [{ year }]
   if (period === 'month') return [{ year, month }]

@@ -79,9 +79,16 @@ function BudgetBar({ budget, realized }) {
   )
 }
 
+function toLocalDateStr(dt) {
+  const y = dt.getFullYear()
+  const m = String(dt.getMonth() + 1).padStart(2, '0')
+  const day = String(dt.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
 function fmtDate(d) {
-  const today = new Date().toISOString().split('T')[0]
-  const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0]
+  const today = toLocalDateStr(new Date())
+  const yesterday = toLocalDateStr(new Date(Date.now() - 86400000))
   if (d === today) return 'Today'
   if (d === yesterday) return 'Yesterday'
   return new Date(d + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
