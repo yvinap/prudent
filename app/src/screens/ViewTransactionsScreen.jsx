@@ -83,7 +83,7 @@ function buildApiCalls(period, customFrom, customTo) {
 function groupByDate(txns) {
   const map = {}
   txns.forEach((t) => {
-    const d = (t.createdAt || '').split('T')[0]
+    const d = t.transactionDate || (t.createdAt || '').split('T')[0]
     ;(map[d] = map[d] || []).push(t)
   })
   return Object.entries(map).sort(([a], [b]) => b.localeCompare(a))
@@ -125,7 +125,12 @@ export default function ViewTransactionsScreen() {
     setError(null)
     Promise.all(calls.map((params) => api.listTransactions(params)))
       .then((arrays) => {
-        const all = arrays.flat().sort((a, b) => (b.createdAt > a.createdAt ? 1 : -1))
+        const all = arrays.flat().sort((a, b) => {
+          const da = a.transactionDate || (a.createdAt || '').split('T')[0]
+          const db = b.transactionDate || (b.createdAt || '').split('T')[0]
+          if (db !== da) return db > da ? 1 : -1
+          return (b.createdAt || '') > (a.createdAt || '') ? 1 : -1
+        })
         setTransactions(all)
       })
       .catch((err) => {
