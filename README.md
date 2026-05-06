@@ -80,3 +80,9 @@ Key decisions are recorded as ADRs in [adrs/](adrs/):
 - [ADR-0005](adrs/0005-react-vite-mantine-frontend.md) — React + Vite + Mantine for the SPA
 - [ADR-0006](adrs/0006-cloudfront-spa-hosting.md) — CloudFront + S3 for SPA hosting
 - [ADR-0007](adrs/0007-presigned-url-receipt-upload.md) — Presigned URL receipt upload
+
+## License
+
+Prudent is free software released under the [GNU General Public License v3.0](LICENSE) or later.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the [LICENSE](LICENSE) file for the full terms.
