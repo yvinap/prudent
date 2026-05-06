@@ -127,8 +127,12 @@ class BackendStack(cdk.Stack):
         )
 
         # ── Shared Lambda environment ─────────────────────────────────────
-        allowed_origins = self.node.try_get_context("allowedOrigins") or "*"
-        common_env = {"S3_BUCKET": bucket.bucket_name, "ALLOWED_ORIGINS": allowed_origins}
+        # Reuse the `allowed_origins` list defined above so Lambda response
+        # headers honour the same CORS allow-list as API Gateway and the bucket.
+        common_env = {
+            "S3_BUCKET": bucket.bucket_name,
+            "ALLOWED_ORIGINS": ",".join(allowed_origins),
+        }
 
         lambda_defaults = {
             "runtime": lambda_.Runtime.PYTHON_3_12,

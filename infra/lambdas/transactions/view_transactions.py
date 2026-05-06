@@ -24,7 +24,19 @@ import boto3
 from botocore.exceptions import ClientError
 
 S3_BUCKET = os.environ["S3_BUCKET"]
-ALLOWED_ORIGINS = os.environ.get("ALLOWED_ORIGINS", "*")
+_ALLOWED_ORIGINS = [o.strip() for o in os.environ.get("ALLOWED_ORIGINS", "*").split(",") if o.strip()]
+_origin = _ALLOWED_ORIGINS[0] if _ALLOWED_ORIGINS else "*"
+
+
+def _pick_origin(event: dict) -> None:
+    """Set module-level _origin from the request's Origin header (CORS allow-list match)."""
+    global _origin
+    if "*" in _ALLOWED_ORIGINS:
+        _origin = "*"
+        return
+    headers = event.get("headers") or {}
+    request_origin = headers.get("origin") or headers.get("Origin") or ""
+    _origin = request_origin if request_origin in _ALLOWED_ORIGINS else (_ALLOWED_ORIGINS[0] if _ALLOWED_ORIGINS else "*")
 
 s3 = boto3.client("s3")
 
@@ -34,7 +46,8 @@ def _response(status: int, body) -> dict:
         "statusCode": status,
         "headers": {
             "Content-Type": "application/json",
-            "Access-Control-Allow-Origin": ALLOWED_ORIGINS,
+            "Access-Control-Allow-Origin": _origin,
+            "Vary": "Origin",
         },
         "body": json.dumps(body),
     }
@@ -75,6 +88,7 @@ def _flatten(year_data: dict, month_filter: str = None,
 
 
 def handler(event, context):
+    _pick_origin(event)
     user_id = event["requestContext"]["authorizer"]["claims"]["sub"]
 
     params = event.get("queryStringParameters") or {}
