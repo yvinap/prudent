@@ -28,6 +28,14 @@ class BackendStack(cdk.Stack):
         google_client_id = google_oauth_secret.secret_value_from_json("client_id").unsafe_unwrap()
         google_client_secret_value = google_oauth_secret.secret_value_from_json("client_secret")
 
+        # ── Allowed origins (CORS) ────────────────────────────────────────
+        # Override at deploy time with: --context allowedOrigins="https://example.com,http://localhost:5173"
+        allowed_origins_ctx = self.node.try_get_context("allowedOrigins")
+        if allowed_origins_ctx:
+            allowed_origins = [o.strip() for o in allowed_origins_ctx.split(",") if o.strip()]
+        else:
+            allowed_origins = ["https://prudigo.com", "https://www.prudigo.com", "http://localhost:5173"]
+
         # ── S3 Data Bucket ────────────────────────────────────────────────
         bucket = s3.Bucket(
             self,
@@ -38,7 +46,7 @@ class BackendStack(cdk.Stack):
             cors=[
                 s3.CorsRule(
                     allowed_methods=[s3.HttpMethods.PUT],
-                    allowed_origins=["*"],
+                    allowed_origins=allowed_origins,
                     allowed_headers=["*"],
                     max_age=3000,
                 )
@@ -286,7 +294,7 @@ class BackendStack(cdk.Stack):
             "PrudentApi",
             rest_api_name="prudent-api",
             default_cors_preflight_options=apigw.CorsOptions(
-                allow_origins=apigw.Cors.ALL_ORIGINS,
+                allow_origins=allowed_origins,
                 allow_methods=apigw.Cors.ALL_METHODS,
                 allow_headers=["Authorization", "Content-Type", "X-Account-Id"],
             ),

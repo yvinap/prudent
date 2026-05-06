@@ -32,7 +32,11 @@ from botocore.exceptions import ClientError
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-S3_BUCKET = os.environ.get("S3_BUCKET", "prudent-REDACTED-us-east-1")
+S3_BUCKET = os.environ.get("S3_BUCKET")
+if not S3_BUCKET:
+    # Required at runtime; CDK injects it via the Lambda environment.
+    # When debugging locally, export S3_BUCKET=<your-bucket-name> first.
+    raise RuntimeError("S3_BUCKET environment variable is not set")
 DEFAULT_CURRENCY = os.environ.get("DEFAULT_CURRENCY", "USD")
 _BEDROCK_MODEL_ID = os.environ.get("BEDROCK_MODEL_ID", "us.amazon.nova-2-lite-v1:0")
 
