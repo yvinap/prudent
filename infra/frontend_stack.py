@@ -30,7 +30,7 @@ class FrontendStack(cdk.Stack):
     def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
 
-        domain_name = "prudigo.com"
+        domain_name = "tab.prudigo.com"
 
         frontend_bucket = s3.Bucket(
             self,

@@ -49,7 +49,7 @@ class BackendStack(cdk.Stack):
         if allowed_origins_ctx:
             allowed_origins = [o.strip() for o in allowed_origins_ctx.split(",") if o.strip()]
         else:
-            allowed_origins = ["https://prudigo.com", "https://www.prudigo.com", "http://localhost:5173"]
+            allowed_origins = ["https://tab.prudigo.com", "https://www.tab.prudigo.com", "http://localhost:5173"]
 
         # ── S3 Data Bucket ────────────────────────────────────────────────
         bucket = s3.Bucket(
@@ -113,7 +113,7 @@ class BackendStack(cdk.Stack):
         )
         user_pool.register_identity_provider(google_provider)
 
-        domain_name = "prudigo.com"
+        domain_name = "tab.prudigo.com"
 
         user_pool_client = user_pool.add_client(
             "PrudentAppClient",
@@ -125,8 +125,8 @@ class BackendStack(cdk.Stack):
                     cognito.OAuthScope.EMAIL,
                     cognito.OAuthScope.PROFILE,
                 ],
-                callback_urls=["http://localhost:5173", f"https://{domain_name}"],
-                logout_urls=["http://localhost:5173", f"https://{domain_name}"],
+                callback_urls=["http://localhost:5173", f"https://{domain_name}", f"https://www.{domain_name}"],
+                logout_urls=["http://localhost:5173", f"https://{domain_name}", f"https://www.{domain_name}"],
             ),
             supported_identity_providers=[
                 cognito.UserPoolClientIdentityProvider.GOOGLE,
@@ -300,7 +300,7 @@ class BackendStack(cdk.Stack):
             handler="handler.handler",
             environment={
                 **common_env,
-                "APP_URL": "https://prudigo.com",
+                "APP_URL": f"https://{domain_name}",
             },
             runtime=lambda_.Runtime.PYTHON_3_12,
             timeout=Duration.seconds(29),
